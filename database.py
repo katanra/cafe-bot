@@ -28,6 +28,11 @@ class Database:
             user_id    INTEGER PRIMARY KEY,
             last_claim TEXT
         )''')
+        c.execute('''CREATE TABLE IF NOT EXISTS vc_milestones (
+            user_id   INTEGER,
+            milestone INTEGER,
+            PRIMARY KEY (user_id, milestone)
+        )''')
         # Add voice_time column to existing databases that don't have it yet
         try:
             c.execute('ALTER TABLE users ADD COLUMN voice_time INTEGER DEFAULT 0')
@@ -83,6 +88,28 @@ class Database:
         c = self.conn.cursor()
         c.execute('SELECT * FROM users ORDER BY voice_time DESC LIMIT ?', (limit,))
         return [dict(r) for r in c.fetchall()]
+
+    def check_new_milestones(self, user_id, old_seconds, new_seconds):
+        """Returns list of milestone hours newly crossed (e.g. [10, 50])."""
+        milestones = [10, 50, 100, 250, 500]
+        crossed = []
+        for m in milestones:
+            threshold = m * 3600
+            if old_seconds < threshold <= new_seconds:
+                c = self.conn.cursor()
+                try:
+                    c.execute('INSERT INTO vc_milestones (user_id, milestone) VALUES (?, ?)', (user_id, m))
+                    self.conn.commit()
+                    crossed.append(m)
+                except sqlite3.IntegrityError:
+                    pass  # Already recorded
+        return crossed
+
+    def reset_voice_time(self):
+        """Reset all users' voice_time to 0."""
+        c = self.conn.cursor()
+        c.execute('UPDATE users SET voice_time = 0')
+        self.conn.commit()
 
     def get_daily_wins(self, user_id):
         """Count how many duel wins this user has recorded today."""

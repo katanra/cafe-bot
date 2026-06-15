@@ -1,40 +1,156 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
+from discord.ext import tasks
+import datetime
 import time
 
-XP_PER_MINUTE_IN_VC = 2   # XP earned per minute in a voice channel
+XP_PER_MINUTE_IN_VC = 2
+
+# Channel to post milestone announcements in
+MILESTONE_CHANNEL = "general"
+
+MILESTONE_MESSAGES = {
+    10:  "☕ {user} has spent **10 hours** in the café. A regular.",
+    50:  "☕ {user} has spent **50 hours** in the café. Practically lives here.",
+    100: "☕ {user} has spent **100 hours** in the café. Are you okay?",
+    250: "☕ {user} has spent **250 hours** in the café. The barista knows your order.",
+    500: "☕ {user} has spent **500 hours** in the café. You ARE the café.",
+}
+
+# Weekly top 3 VC XP rewards (resets Sunday midnight UTC)
+WEEKLY_VC_REWARDS = [500, 300, 100]
+
 
 class Voice(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # {user_id: join_timestamp}
-        self.voice_sessions: dict[int, float] = {}
-        # {channel_id: owner_id}
-        self.temp_vcs: dict[int, int] = {}
+        self.voice_sessions: dict[int, float] = {}   # {user_id: join_timestamp}
+        self.temp_vcs:       dict[int, int]   = {}   # {channel_id: owner_id}
+        self.weekly_vc_reset.start()
+
+    def cog_unload(self):
+        self.weekly_vc_reset.cancel()
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
-    def _save_session(self, user_id: int):
-        """Flush an active voice session to the database and return seconds."""
+    def _fmt_time(self, seconds: int) -> str:
+        h = seconds // 3600
+        m = (seconds % 3600) // 60
+        s = seconds % 60
+        if h:
+            return f"{h}h {m}m"
+        if m:
+            return f"{m}m {s}s"
+        return f"{s}s"
+
+    async def _save_session(self, member: discord.Member):
+        """Flush session to DB, award XP, check milestones. Returns duration in seconds."""
+        user_id = member.id
         if user_id not in self.voice_sessions:
             return 0
         duration = int(time.time() - self.voice_sessions.pop(user_id))
-        if duration > 0:
-            self.bot.db.add_voice_time(user_id, duration)
-            xp = duration // 60 * XP_PER_MINUTE_IN_VC
-            if xp > 0:
-                self.bot.db.add_xp(user_id, xp)
+        if duration <= 0:
+            return 0
+
+        old_total = self.bot.db.get_user(user_id).get('voice_time', 0)
+        self.bot.db.add_voice_time(user_id, duration)
+        new_total = old_total + duration
+
+        xp = (duration // 60) * XP_PER_MINUTE_IN_VC
+        if xp > 0:
+            self.bot.db.add_xp(user_id, xp)
+
+        # Milestone check
+        crossed = self.bot.db.check_new_milestones(user_id, old_total, new_total)
+        if crossed and member.guild:
+            await self._announce_milestones(member, crossed)
+
         return duration
 
+    async def _announce_milestones(self, member: discord.Member, milestones: list):
+        channel = discord.utils.get(member.guild.text_channels, name=MILESTONE_CHANNEL)
+        if not channel:
+            for ch in member.guild.text_channels:
+                if ch.permissions_for(member.guild.me).send_messages:
+                    channel = ch
+                    break
+        if not channel:
+            return
+        for m in milestones:
+            msg = MILESTONE_MESSAGES.get(m, f"☕ {member.mention} hit **{m} hours** in VC!")
+            embed = discord.Embed(
+                description=msg.format(user=member.mention),
+                color=0x3B1F0E
+            )
+            await channel.send(embed=embed)
+
+    async def _send_session_dm(self, member: discord.Member, duration: int, xp: int, total: int):
+        try:
+            embed = discord.Embed(
+                title="☕ Session Summary",
+                description=(
+                    f"Thanks for hanging out in the café!\n\n"
+                    f"**Session time:** {self._fmt_time(duration)}\n"
+                    f"**XP earned:** +{xp} ⭐\n"
+                    f"**Total VC time:** {self._fmt_time(total)}"
+                ),
+                color=0x3B1F0E
+            )
+            await member.send(embed=embed)
+        except discord.Forbidden:
+            pass  # DMs closed — ignore silently
+
     async def _check_temp_vc(self, channel: discord.VoiceChannel):
-        """Delete a temp VC if it belongs to us and is now empty."""
         if channel and channel.id in self.temp_vcs and len(channel.members) == 0:
             del self.temp_vcs[channel.id]
             try:
                 await channel.delete(reason="Temp VC auto-deleted (empty)")
             except Exception:
                 pass
+
+    # ── Weekly reset ──────────────────────────────────────────────────────────
+
+    @tasks.loop(time=datetime.time(hour=0, minute=0, tzinfo=datetime.timezone.utc))
+    async def weekly_vc_reset(self):
+        """Every Sunday midnight UTC: reward top 3 then reset all VC times."""
+        if datetime.datetime.now(datetime.timezone.utc).weekday() != 6:
+            return
+
+        top3 = self.bot.db.get_voice_leaderboard(3)
+        for i, row in enumerate(top3[:3]):
+            if row['voice_time'] > 0:
+                self.bot.db.add_xp(row['user_id'], WEEKLY_VC_REWARDS[i])
+
+        self.bot.db.reset_voice_time()
+
+        for guild in self.bot.guilds:
+            channel = discord.utils.get(guild.text_channels, name=MILESTONE_CHANNEL)
+            if not channel:
+                continue
+            lines  = []
+            medals = ["#1", "#2", "#3"]
+            for i, row in enumerate(top3[:3]):
+                if row['voice_time'] == 0:
+                    continue
+                m    = guild.get_member(row['user_id'])
+                name = m.display_name if m else f"User {row['user_id']}"
+                lines.append(f"{medals[i]} **{name}** — +{WEEKLY_VC_REWARDS[i]} XP")
+            if lines:
+                embed = discord.Embed(
+                    title="☕ Weekly VC Leaderboard Reset",
+                    description=(
+                        "The weekly voice time leaderboard has been reset.\n"
+                        "Top earners this week:\n\n" + "\n".join(lines) + "\n\n"
+                        "See you in the café next week!"
+                    ),
+                    color=0x3B1F0E
+                )
+                await channel.send(embed=embed)
+
+    @weekly_vc_reset.before_loop
+    async def before_reset(self):
+        await self.bot.wait_until_ready()
 
     # ── Voice state listener ──────────────────────────────────────────────────
 
@@ -43,35 +159,87 @@ class Voice(commands.Cog):
         self,
         member: discord.Member,
         before: discord.VoiceState,
-        after: discord.VoiceState,
+        after:  discord.VoiceState,
     ):
         if member.bot:
             return
 
-        joined  = after.channel is not None and before.channel is None
-        left    = before.channel is not None and after.channel is None
-        moved   = (before.channel is not None and after.channel is not None
-                   and before.channel.id != after.channel.id)
+        joined = after.channel is not None and before.channel is None
+        left   = before.channel is not None and after.channel is None
+        moved  = (before.channel is not None and after.channel is not None
+                  and before.channel.id != after.channel.id)
 
         if joined:
             self.voice_sessions[member.id] = time.time()
 
         elif left:
-            self._save_session(member.id)
+            await self._save_session(member)
             await self._check_temp_vc(before.channel)
 
         elif moved:
-            self._save_session(member.id)
+            await self._save_session(member)
             self.voice_sessions[member.id] = time.time()
             await self._check_temp_vc(before.channel)
 
+    # ── /vctop ────────────────────────────────────────────────────────────────
+
+    @app_commands.command(name="vctop", description="Show the voice time leaderboard")
+    async def vctop(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        data = self.bot.db.get_voice_leaderboard(10)
+
+        if not data:
+            await interaction.followup.send("Nobody has spent time in a VC yet!")
+            return
+
+        medals = ["#1", "#2", "#3"]
+        lines  = []
+        for i, row in enumerate(data):
+            if row['voice_time'] == 0:
+                continue
+            member = interaction.guild.get_member(row['user_id'])
+            name   = member.display_name if member else f"User {row['user_id']}"
+            rank   = medals[i] if i < 3 else f"#{i+1}"
+            total  = row['voice_time']
+            if row['user_id'] in self.voice_sessions:
+                total += int(time.time() - self.voice_sessions[row['user_id']])
+            lines.append(f"{rank} **{name}** — {self._fmt_time(total)}")
+
+        if not lines:
+            await interaction.followup.send("Nobody has spent time in a VC yet!")
+            return
+
+        embed = discord.Embed(
+            title="☕ Voice Time Leaderboard",
+            description="\n".join(lines),
+            color=0x3B1F0E
+        )
+        embed.set_footer(text="Resets every Sunday midnight UTC  •  2 XP per minute in VC")
+        await interaction.followup.send(embed=embed)
+
+    # ── /voicetime ────────────────────────────────────────────────────────────
+
+    @app_commands.command(name="voicetime", description="Check time spent in voice channels")
+    async def voicetime(self, interaction: discord.Interaction, member: discord.Member = None):
+        target = member or interaction.user
+        user   = self.bot.db.get_user(target.id)
+        total  = user.get('voice_time', 0)
+
+        if target.id in self.voice_sessions:
+            total += int(time.time() - self.voice_sessions[target.id])
+
+        embed = discord.Embed(
+            title=f"☕ {target.display_name}'s Voice Time",
+            description=f"**{self._fmt_time(total)}** spent in voice channels",
+            color=0x3B1F0E
+        )
+        embed.set_thumbnail(url=target.display_avatar.url)
+        await interaction.response.send_message(embed=embed)
+
     # ── /createvc ─────────────────────────────────────────────────────────────
 
-    @app_commands.command(name="createvc", description="Create a private temporary voice channel")
-    @app_commands.describe(
-        name="Name for your voice channel",
-        limit="Max users (0 = unlimited)"
-    )
+    @app_commands.command(name="createvc", description="Create a temporary voice channel")
+    @app_commands.describe(name="Name for your voice channel", limit="Max users (0 = unlimited)")
     async def createvc(self, interaction: discord.Interaction, name: str, limit: int = 0):
         if not isinstance(interaction.user, discord.Member):
             await interaction.response.send_message("❌ Must be used in a server.", ephemeral=True)
@@ -79,8 +247,6 @@ class Voice(commands.Cog):
 
         guild    = interaction.guild
         category = None
-
-        # Prefer the category the user is currently in, otherwise first VC category
         if interaction.user.voice and interaction.user.voice.channel:
             category = interaction.user.voice.channel.category
         else:
@@ -91,29 +257,28 @@ class Voice(commands.Cog):
 
         try:
             channel = await guild.create_voice_channel(
-                name=f"🔒 {name}",
+                name=f"[ {name} ]",
                 category=category,
                 user_limit=limit if limit > 0 else None,
                 reason=f"Temp VC by {interaction.user}"
             )
             self.temp_vcs[channel.id] = interaction.user.id
 
-            # Move creator in if they're already in a VC
             if interaction.user.voice:
                 await interaction.user.move_to(channel)
-                moved_msg = "You've been moved in automatically!"
+                moved_msg = "You've been moved in automatically."
             else:
-                moved_msg = f"Join it here: {channel.mention}"
+                moved_msg = f"Join here: {channel.mention}"
 
             embed = discord.Embed(
-                title="🎙️ Temp VC Created!",
+                title="☕ Temp VC Created",
                 description=(
-                    f"**{channel.name}** is live!\n"
-                    f"👥 Limit: {'Unlimited' if limit == 0 else limit}\n"
+                    f"**{channel.name}** is live.\n"
+                    f"Limit: {'Unlimited' if limit == 0 else limit}\n"
                     f"{moved_msg}\n\n"
-                    f"🗑️ It will auto-delete when everyone leaves."
+                    f"Auto-deletes when everyone leaves."
                 ),
-                color=discord.Color.blue()
+                color=0x3B1F0E
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -124,28 +289,6 @@ class Voice(commands.Cog):
         except Exception as e:
             await interaction.response.send_message(f"❌ Error: {e}", ephemeral=True)
 
-    # ── /voicetime ────────────────────────────────────────────────────────────
-
-    @app_commands.command(name="voicetime", description="Check time spent in voice channels")
-    async def voicetime(self, interaction: discord.Interaction, member: discord.Member = None):
-        target = member or interaction.user
-        user   = self.bot.db.get_user(target.id)
-        total  = user.get('voice_time', 0)
-
-        # Add live session time if they're in a VC right now
-        if target.id in self.voice_sessions:
-            total += int(time.time() - self.voice_sessions[target.id])
-
-        hours = total // 3600
-        mins  = (total % 3600) // 60
-
-        embed = discord.Embed(
-            title=f"🎙️ {target.display_name}'s Voice Time",
-            description=f"**{hours}h {mins}m** spent in voice channels",
-            color=discord.Color.blue()
-        )
-        embed.set_thumbnail(url=target.display_avatar.url)
-        await interaction.response.send_message(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(Voice(bot))
