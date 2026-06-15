@@ -1,0 +1,5 @@
+.env
+cafe_bot.db
+__pycache__/
+*.py[cod]
+*.pyo
