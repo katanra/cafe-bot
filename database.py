@@ -84,6 +84,30 @@ class Database:
         c.execute('SELECT * FROM users ORDER BY voice_time DESC LIMIT ?', (limit,))
         return [dict(r) for r in c.fetchall()]
 
+    def get_daily_wins(self, user_id):
+        """Count how many duel wins this user has recorded today."""
+        c = self.conn.cursor()
+        today = datetime.date.today().isoformat()
+        c.execute('''
+            SELECT COUNT(*) as cnt FROM duels
+            WHERE winner_id = ? AND status = 'completed'
+            AND DATE(created_at) = ?
+        ''', (user_id, today))
+        row = c.fetchone()
+        return row['cnt'] if row else 0
+
+    def get_duel_leaderboard(self, limit=10):
+        c = self.conn.cursor()
+        c.execute('''
+            SELECT winner_id, COUNT(*) as wins
+            FROM duels
+            WHERE status = 'completed'
+            GROUP BY winner_id
+            ORDER BY wins DESC
+            LIMIT ?
+        ''', (limit,))
+        return [dict(r) for r in c.fetchall()]
+
     # ── Duels ─────────────────────────────────────────────────────────────────
 
     def create_duel(self, challenger_id, opponent_id, channel_id):

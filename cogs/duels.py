@@ -1,11 +1,31 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
+import datetime
+import time
 
-DUEL_WIN_GOLD = 50
+DUEL_WIN_GOLD      = 50
+DUEL_MOD_ROLE      = "Duel Mod"       # Role that can confirm winners
+DUEL_LOG_CHANNEL   = "duel-log"       # Channel to post results in
+DUEL_COOLDOWN_SECS = 30 * 60          # 30 minutes between duels
+MAX_DAILY_WINS     = 10               # Max gold-earning wins per day
+
+DUEL_RULES = [
+    ("👤 Character",    "Both players must play as **Wraith**. No other legend allowed."),
+    ("🚫 Abilities",    "No **Tactical** or **Ultimate** abilities during the duel. Passive is fine."),
+    ("🔫 Weapons",      "Loadout agreed before the match — **no takebacks**.\n**Banned:** Care Package weapons (Kraber, Bocek, etc.) and weapons with upgrade abilities (e.g. Double Tap Alternator)."),
+    ("🛡️ Gear",        "Both players must have a **Purple (Level 3) Evo Shield** equipped."),
+    ("🎯 Format",       "**First to 9 kills** wins. Match takes place in **The PIT** in the Firing Range."),
+    ("📺 Screen Share", "At least one player must share their screen in a **server Voice Channel**. If neither can share, the duel is **void**."),
+    ("🔌 Disconnects",  "If a player disconnects and does not return within **10 minutes**, they **forfeit** the match."),
+    ("📋 Account Req.", "Account must be **Level 100+**. Smurf accounts are **banned** and result in disqualification."),
+    ("✅ Confirmation", "The winner is confirmed **only by a Duel Mod** watching the screen share. Players cannot self-report."),
+]
 
 
 class ActiveDuelView(discord.ui.View):
+    """Only Duel Mods can click the winner buttons."""
+
     def __init__(self, challenger: discord.Member, opponent: discord.Member, db, duel_id: int):
         super().__init__(timeout=None)
         self.challenger = challenger
@@ -13,38 +33,94 @@ class ActiveDuelView(discord.ui.View):
         self.db         = db
         self.duel_id    = duel_id
 
-    @discord.ui.button(label="🏆 I Won!", style=discord.ButtonStyle.green)
-    async def claim_win(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id not in (self.challenger.id, self.opponent.id):
-            await interaction.response.send_message("❌ You're not in this duel!", ephemeral=True)
-            return
-        winner = interaction.user
-        loser  = self.opponent if winner.id == self.challenger.id else self.challenger
+        # Dynamically label buttons with actual player names
+        self.children[0].label = f"🏆 {challenger.display_name} Wins"
+        self.children[1].label = f"🏆 {opponent.display_name} Wins"
+
+    def _is_duel_mod(self, interaction: discord.Interaction) -> bool:
+        role = discord.utils.get(interaction.guild.roles, name=DUEL_MOD_ROLE)
+        return role in interaction.user.roles if role else False
+
+    async def _resolve(self, interaction: discord.Interaction, winner: discord.Member, loser: discord.Member):
+        # Check daily win cap
+        today_wins = interaction.client.db.get_daily_wins(winner.id)
+        gold_msg = ""
+        if today_wins < MAX_DAILY_WINS:
+            self.db.add_gold(winner.id, DUEL_WIN_GOLD)
+            gold_msg = f"\n🪙 +**{DUEL_WIN_GOLD}** Gold awarded!"
+        else:
+            gold_msg = f"\n⚠️ Daily win cap ({MAX_DAILY_WINS}) reached — no gold this time."
+
         self.db.complete_duel(self.duel_id, winner.id)
-        self.db.add_gold(winner.id, DUEL_WIN_GOLD)
+
         for item in self.children:
             item.disabled = True
+
+        # Update roles
         roles_cog = interaction.client.get_cog('Roles')
         if roles_cog:
-            guild = interaction.guild
-            await roles_cog.update_roles(winner, guild)
-            await roles_cog.update_top3_roles(guild)
+            await roles_cog.update_roles(winner, interaction.guild)
+            await roles_cog.update_top3_roles(interaction.guild)
+
         embed = discord.Embed(
             title="🏆 Duel Complete!",
-            description=f"**{winner.mention}** defeated **{loser.mention}**!\n\n🪙 +**{DUEL_WIN_GOLD}** Gold awarded!",
+            description=(
+                f"**{winner.mention}** defeated **{loser.mention}**!"
+                f"{gold_msg}\n\n"
+                f"*Confirmed by {interaction.user.mention}*"
+            ),
             color=discord.Color.gold()
         )
         await interaction.response.edit_message(embed=embed, view=self)
 
-    @discord.ui.button(label="🚫 Cancel", style=discord.ButtonStyle.grey)
-    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id not in (self.challenger.id, self.opponent.id):
-            await interaction.response.send_message("❌ You're not in this duel!", ephemeral=True)
+        # Log to #duel-log
+        log_channel = discord.utils.get(interaction.guild.text_channels, name=DUEL_LOG_CHANNEL)
+        if log_channel:
+            log_embed = discord.Embed(
+                title="📋 Duel Result",
+                description=(
+                    f"**Winner:** {winner.mention}\n"
+                    f"**Loser:** {loser.mention}\n"
+                    f"**Gold awarded:** {'Yes' if today_wins < MAX_DAILY_WINS else 'No (cap reached)'}\n"
+                    f"**Confirmed by:** {interaction.user.mention}"
+                ),
+                color=discord.Color.gold(),
+                timestamp=datetime.datetime.utcnow()
+            )
+            await log_channel.send(embed=log_embed)
+
+    @discord.ui.button(label="🏆 Challenger Wins", style=discord.ButtonStyle.green, row=0)
+    async def challenger_wins(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self._is_duel_mod(interaction):
+            await interaction.response.send_message(
+                f"❌ Only **{DUEL_MOD_ROLE}**s can confirm the winner!", ephemeral=True
+            )
+            return
+        await self._resolve(interaction, self.challenger, self.opponent)
+
+    @discord.ui.button(label="🏆 Opponent Wins", style=discord.ButtonStyle.green, row=0)
+    async def opponent_wins(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self._is_duel_mod(interaction):
+            await interaction.response.send_message(
+                f"❌ Only **{DUEL_MOD_ROLE}**s can confirm the winner!", ephemeral=True
+            )
+            return
+        await self._resolve(interaction, self.opponent, self.challenger)
+
+    @discord.ui.button(label="❌ No Contest", style=discord.ButtonStyle.red, row=1)
+    async def no_contest(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self._is_duel_mod(interaction):
+            await interaction.response.send_message(
+                f"❌ Only **{DUEL_MOD_ROLE}**s can cancel a duel!", ephemeral=True
+            )
             return
         self.db.cancel_duel_by_id(self.duel_id)
         for item in self.children:
             item.disabled = True
-        await interaction.response.edit_message(content="❌ Duel cancelled.", embed=None, view=self)
+        await interaction.response.edit_message(
+            content=f"❌ Duel ruled **No Contest** by {interaction.user.mention}.",
+            embed=None, view=self
+        )
 
 
 class DuelChallengeView(discord.ui.View):
@@ -63,12 +139,19 @@ class DuelChallengeView(discord.ui.View):
         self.db.accept_duel(self.duel_id)
         for item in self.children:
             item.disabled = True
+
         embed = discord.Embed(
             title="⚔️ Duel in Progress!",
             description=(
                 f"{self.challenger.mention} **vs** {self.opponent.mention}\n\n"
-                f"When the duel is over, the winner clicks **I Won!**\n"
-                f"🏆 Prize: **{DUEL_WIN_GOLD}** 🪙 Gold"
+                f"🏆 Prize: **{DUEL_WIN_GOLD}** 🪙 Gold\n\n"
+                f"📋 **Key Rules:**\n"
+                f"• Wraith only — no Tactical or Ultimate\n"
+                f"• Purple Evo Shield required\n"
+                f"• No Care Package or upgrade-ability weapons\n"
+                f"• First to 9 kills in The PIT\n"
+                f"• One player must share screen in VC\n\n"
+                f"⚠️ A **{DUEL_MOD_ROLE}** must confirm the winner below."
             ),
             color=discord.Color.orange()
         )
@@ -96,28 +179,105 @@ class DuelChallengeView(discord.ui.View):
 class Duels(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        # {user_id: timestamp} — cooldown tracking (in memory)
+        self._last_duel:     dict[int, float] = {}
+        # {user_id: opponent_id} — last opponent tracking
+        self._last_opponent: dict[int, int]   = {}
 
     @app_commands.command(name="duel", description="Challenge someone to a duel for gold!")
     async def duel(self, interaction: discord.Interaction, opponent: discord.Member):
-        if opponent.id == interaction.user.id:
+        challenger = interaction.user
+
+        # Basic checks
+        if opponent.id == challenger.id:
             await interaction.response.send_message("❌ You can't duel yourself!", ephemeral=True)
             return
         if opponent.bot:
             await interaction.response.send_message("❌ You can't duel a bot!", ephemeral=True)
             return
 
-        duel_id = self.bot.db.create_duel(interaction.user.id, opponent.id, interaction.channel_id)
+        # Cooldown check
+        last = self._last_duel.get(challenger.id, 0)
+        elapsed = time.time() - last
+        if elapsed < DUEL_COOLDOWN_SECS:
+            remaining = int(DUEL_COOLDOWN_SECS - elapsed)
+            m, s = remaining // 60, remaining % 60
+            await interaction.response.send_message(
+                f"⏳ You must wait **{m}m {s}s** before starting another duel.",
+                ephemeral=True
+            )
+            return
+
+        # Same-opponent-twice check
+        if self._last_opponent.get(challenger.id) == opponent.id:
+            await interaction.response.send_message(
+                f"❌ You can't challenge **{opponent.display_name}** again back-to-back. Challenge someone else first!",
+                ephemeral=True
+            )
+            return
+
+        # Record cooldown + last opponent
+        self._last_duel[challenger.id]     = time.time()
+        self._last_opponent[challenger.id] = opponent.id
+
+        duel_id = self.bot.db.create_duel(challenger.id, opponent.id, interaction.channel_id)
+
+        # Ping Duel Mod role
+        mod_role = discord.utils.get(interaction.guild.roles, name=DUEL_MOD_ROLE)
+        mod_ping = mod_role.mention if mod_role else ""
+
         embed = discord.Embed(
             title="⚔️ Duel Challenge!",
             description=(
-                f"{interaction.user.mention} has challenged {opponent.mention} to a duel!\n\n"
-                f"🏆 Winner earns **{DUEL_WIN_GOLD}** 🪙 Gold\n\n"
+                f"{challenger.mention} has challenged {opponent.mention} to a duel!\n\n"
+                f"🏆 Winner earns **{DUEL_WIN_GOLD}** 🪙 Gold\n"
+                f"⚠️ A **{DUEL_MOD_ROLE}** will confirm the winner.\n\n"
                 f"{opponent.mention}, do you accept?"
             ),
             color=discord.Color.red()
         )
-        view = DuelChallengeView(interaction.user, opponent, self.bot.db, duel_id)
-        await interaction.response.send_message(embed=embed, view=view)
+        view = DuelChallengeView(challenger, opponent, self.bot.db, duel_id)
+        content = f"{mod_ping} 👀 Duel requested — please be ready to spectate!" if mod_ping else None
+        await interaction.response.send_message(content=content, embed=embed, view=view)
+
+    @app_commands.command(name="duelrules", description="Show the official 1v1 duel rules")
+    async def duelrules(self, interaction: discord.Interaction):
+        embed = discord.Embed(
+            title="☠️ Café 1v1 Duel Rules",
+            description="All duels are **Apex Legends** 1v1s in the Firing Range. Read carefully before challenging.",
+            color=discord.Color.dark_red()
+        )
+        for name, value in DUEL_RULES:
+            embed.add_field(name=name, value=value, inline=False)
+        embed.set_footer(text="Breaking any rule results in disqualification. Duel Mods have final say.")
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="duelboard", description="Show the duel wins leaderboard")
+    async def duelboard(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        data = self.bot.db.get_duel_leaderboard(10)
+
+        if not data:
+            await interaction.followup.send("No duels have been completed yet!")
+            return
+
+        medals = ["🥇", "🥈", "🥉"]
+        lines  = []
+        for i, row in enumerate(data):
+            member = interaction.guild.get_member(row['winner_id'])
+            name   = member.display_name if member else f"User {row['winner_id']}"
+            medal  = medals[i] if i < 3 else f"`#{i+1}`"
+            wins   = row['wins']
+            lines.append(f"{medal} **{name}** — {wins} win{'s' if wins != 1 else ''}")
+
+        embed = discord.Embed(
+            title="⚔️ Duel Leaderboard",
+            description="\n".join(lines),
+            color=discord.Color.red()
+        )
+        embed.set_footer(text="Gold is only earned by winning duels!")
+        await interaction.followup.send(embed=embed)
+
 
 async def setup(bot):
     await bot.add_cog(Duels(bot))
