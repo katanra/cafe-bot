@@ -5,6 +5,7 @@ from discord.ext import tasks
 import datetime
 
 DAILY_XP = 50   # Gold is earned ONLY through winning duels
+SEP = "─" * 28
 
 class Rewards(commands.Cog):
     def __init__(self, bot):
@@ -53,13 +54,15 @@ class Rewards(commands.Cog):
         self.bot.db.add_xp(interaction.user.id, DAILY_XP)
 
         embed = discord.Embed(
-            title="🎁 Daily Reward Claimed!",
+            title="☕  Daily Reward",
             description=(
-                f"+**{DAILY_XP}** ⭐ XP\n\n"
-                f"Want 🪙 Gold? Win a duel!\n"
-                f"Come back tomorrow for more XP!"
+                f"*Your café allowance for today*\n"
+                f"{SEP}\n"
+                f"✦  **+{DAILY_XP} XP** awarded\n\n"
+                f"▸  Want gold? Win a duel.\n"
+                f"▸  Come back tomorrow for more XP."
             ),
-            color=discord.Color.green()
+            color=0x3B6D11
         )
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         await interaction.response.send_message(embed=embed)

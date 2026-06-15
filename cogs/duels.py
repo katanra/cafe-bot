@@ -5,6 +5,7 @@ import datetime
 import time
 
 DUEL_WIN_GOLD      = 50
+SEP                = "─" * 28
 DUEL_MOD_ROLE      = "Duel Mod"       # Role that can confirm winners
 DUEL_LOG_CHANNEL   = "duel-log"       # Channel to post results in
 DUEL_COOLDOWN_SECS = 30 * 60          # 30 minutes between duels
@@ -63,13 +64,16 @@ class ActiveDuelView(discord.ui.View):
             await roles_cog.update_top3_roles(interaction.guild)
 
         embed = discord.Embed(
-            title="🏆 Duel Complete!",
+            title="⚔️  Duel Complete",
             description=(
-                f"**{winner.mention}** defeated **{loser.mention}**!"
-                f"{gold_msg}\n\n"
-                f"*Confirmed by {interaction.user.mention}*"
+                f"*The dust has settled*\n"
+                f"{SEP}\n"
+                f"✦  **{winner.mention}** defeated **{loser.mention}**"
+                f"{gold_msg}\n"
+                f"{SEP}\n"
+                f"▸  *Confirmed by {interaction.user.mention}*"
             ),
-            color=discord.Color.gold()
+            color=0xBA7517
         )
         await interaction.response.edit_message(embed=embed, view=self)
 
@@ -77,14 +81,16 @@ class ActiveDuelView(discord.ui.View):
         log_channel = discord.utils.get(interaction.guild.text_channels, name=DUEL_LOG_CHANNEL)
         if log_channel:
             log_embed = discord.Embed(
-                title="📋 Duel Result",
+                title="⚔️  Duel Result",
                 description=(
-                    f"**Winner:** {winner.mention}\n"
-                    f"**Loser:** {loser.mention}\n"
-                    f"**Gold awarded:** {'Yes' if today_wins < MAX_DAILY_WINS else 'No (cap reached)'}\n"
-                    f"**Confirmed by:** {interaction.user.mention}"
+                    f"*Match record*\n"
+                    f"{SEP}\n"
+                    f"✦  **Winner:** {winner.mention}\n"
+                    f"◆  **Loser:** {loser.mention}\n"
+                    f"◆  **Gold awarded:** {'Yes' if today_wins < MAX_DAILY_WINS else 'No — daily cap reached'}\n"
+                    f"▸  **Confirmed by:** {interaction.user.mention}"
                 ),
-                color=discord.Color.gold(),
+                color=0xBA7517,
                 timestamp=datetime.datetime.utcnow()
             )
             await log_channel.send(embed=log_embed)
@@ -141,19 +147,23 @@ class DuelChallengeView(discord.ui.View):
             item.disabled = True
 
         embed = discord.Embed(
-            title="⚔️ Duel in Progress!",
+            title="⚔️  Duel in Progress",
             description=(
-                f"{self.challenger.mention} **vs** {self.opponent.mention}\n\n"
-                f"🏆 Prize: **{DUEL_WIN_GOLD}** 🪙 Gold\n\n"
-                f"📋 **Key Rules:**\n"
-                f"• Wraith only — no Tactical or Ultimate\n"
-                f"• Purple Evo Shield required\n"
-                f"• No Care Package or upgrade-ability weapons\n"
-                f"• First to 9 kills in The PIT\n"
-                f"• One player must share screen in VC\n\n"
-                f"⚠️ A **{DUEL_MOD_ROLE}** must confirm the winner below."
+                f"*May the best player win*\n"
+                f"{SEP}\n"
+                f"✦  {self.challenger.mention}  **vs**  {self.opponent.mention}\n"
+                f"◆  Prize: **{DUEL_WIN_GOLD} gold** to the winner\n"
+                f"{SEP}\n"
+                f"**◆  Rules reminder**\n"
+                f"▸  Wraith only — no Tactical or Ultimate\n"
+                f"▸  Purple Evo Shield required\n"
+                f"▸  No Care Package or upgrade-ability weapons\n"
+                f"▸  First to 9 kills in The PIT\n"
+                f"▸  One player must share screen in VC\n"
+                f"{SEP}\n"
+                f"*A* ***{DUEL_MOD_ROLE}*** *must confirm the winner below.*"
             ),
-            color=discord.Color.orange()
+            color=0x854F0B
         )
         active_view = ActiveDuelView(self.challenger, self.opponent, self.db, self.duel_id)
         await interaction.response.edit_message(embed=embed, view=active_view)
@@ -227,14 +237,17 @@ class Duels(commands.Cog):
         mod_ping = mod_role.mention if mod_role else ""
 
         embed = discord.Embed(
-            title="⚔️ Duel Challenge!",
+            title="⚔️  Duel Challenge",
             description=(
-                f"{challenger.mention} has challenged {opponent.mention} to a duel!\n\n"
-                f"🏆 Winner earns **{DUEL_WIN_GOLD}** 🪙 Gold\n"
-                f"⚠️ A **{DUEL_MOD_ROLE}** will confirm the winner.\n\n"
-                f"{opponent.mention}, do you accept?"
+                f"*A challenge has been issued*\n"
+                f"{SEP}\n"
+                f"✦  {challenger.mention} has challenged {opponent.mention}\n"
+                f"◆  Winner earns **{DUEL_WIN_GOLD} gold**\n"
+                f"◆  A **{DUEL_MOD_ROLE}** will confirm the winner\n"
+                f"{SEP}\n"
+                f"*{opponent.mention}, do you accept?*"
             ),
-            color=discord.Color.red()
+            color=0xA32D2D
         )
         view = DuelChallengeView(challenger, opponent, self.bot.db, duel_id)
         content = f"{mod_ping} 👀 Duel requested — please be ready to spectate!" if mod_ping else None
@@ -243,12 +256,12 @@ class Duels(commands.Cog):
     @app_commands.command(name="duelrules", description="Show the official 1v1 duel rules")
     async def duelrules(self, interaction: discord.Interaction):
         embed = discord.Embed(
-            title="☠️ Café 1v1 Duel Rules",
-            description="All duels are **Apex Legends** 1v1s in the Firing Range. Read carefully before challenging.",
-            color=discord.Color.dark_red()
+            title="⚔️  Official Duel Rules",
+            description=f"*Apex Legends 1v1 — Firing Range*\n{SEP}",
+            color=0xA32D2D
         )
         for name, value in DUEL_RULES:
-            embed.add_field(name=name, value=value, inline=False)
+            embed.add_field(name=f"◆  {name}", value=f"▸  {value}", inline=False)
         embed.set_footer(text="Breaking any rule results in disqualification. Duel Mods have final say.")
         await interaction.response.send_message(embed=embed)
 
@@ -261,21 +274,21 @@ class Duels(commands.Cog):
             await interaction.followup.send("No duels have been completed yet!")
             return
 
-        medals = ["🥇", "🥈", "🥉"]
+        ranks  = ["✦  #1", "◆  #2", "▸  #3"]
         lines  = []
         for i, row in enumerate(data):
             member = interaction.guild.get_member(row['winner_id'])
             name   = member.display_name if member else f"User {row['winner_id']}"
-            medal  = medals[i] if i < 3 else f"`#{i+1}`"
+            rank   = ranks[i] if i < 3 else f"      #{i+1}"
             wins   = row['wins']
-            lines.append(f"{medal} **{name}** — {wins} win{'s' if wins != 1 else ''}")
+            lines.append(f"{rank}  **{name}** — {wins} win{'s' if wins != 1 else ''}")
 
         embed = discord.Embed(
-            title="⚔️ Duel Leaderboard",
-            description="\n".join(lines),
-            color=discord.Color.red()
+            title="⚔️  Duel Leaderboard",
+            description=f"*Ranked by total wins*\n{SEP}\n" + "\n".join(lines),
+            color=0xA32D2D
         )
-        embed.set_footer(text="Gold is only earned by winning duels!")
+        embed.set_footer(text="Gold is earned through winning duels only.")
         await interaction.followup.send(embed=embed)
 
 

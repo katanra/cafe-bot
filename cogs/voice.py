@@ -10,12 +10,14 @@ XP_PER_MINUTE_IN_VC = 2
 # Channel to post milestone announcements in
 MILESTONE_CHANNEL = "general"
 
+SEP = "─" * 28
+
 MILESTONE_MESSAGES = {
-    10:  "☕ {user} has spent **10 hours** in the café. A regular.",
-    50:  "☕ {user} has spent **50 hours** in the café. Practically lives here.",
-    100: "☕ {user} has spent **100 hours** in the café. Are you okay?",
-    250: "☕ {user} has spent **250 hours** in the café. The barista knows your order.",
-    500: "☕ {user} has spent **500 hours** in the café. You ARE the café.",
+    10:  "✦  {user} has spent **10 hours** in the café. *A regular.*",
+    50:  "✦  {user} has spent **50 hours** in the café. *Practically lives here.*",
+    100: "✦  {user} has spent **100 hours** in the café. *Are you okay?*",
+    250: "✦  {user} has spent **250 hours** in the café. *The barista knows your order.*",
+    500: "✦  {user} has spent **500 hours** in the café. *You ARE the café.*",
 }
 
 # Weekly top 3 VC XP rewards (resets Sunday midnight UTC)
@@ -128,21 +130,23 @@ class Voice(commands.Cog):
             channel = discord.utils.get(guild.text_channels, name=MILESTONE_CHANNEL)
             if not channel:
                 continue
+            ranks  = ["✦  #1", "◆  #2", "▸  #3"]
             lines  = []
-            medals = ["#1", "#2", "#3"]
             for i, row in enumerate(top3[:3]):
                 if row['voice_time'] == 0:
                     continue
                 m    = guild.get_member(row['user_id'])
                 name = m.display_name if m else f"User {row['user_id']}"
-                lines.append(f"{medals[i]} **{name}** — +{WEEKLY_VC_REWARDS[i]} XP")
+                lines.append(f"{ranks[i]}  **{name}** — +{WEEKLY_VC_REWARDS[i]} XP")
             if lines:
                 embed = discord.Embed(
-                    title="☕ Weekly VC Leaderboard Reset",
+                    title="☕  Weekly VC Reset",
                     description=(
-                        "The weekly voice time leaderboard has been reset.\n"
-                        "Top earners this week:\n\n" + "\n".join(lines) + "\n\n"
-                        "See you in the café next week!"
+                        f"*The leaderboard has been wiped. Top earners rewarded.*\n"
+                        f"{SEP}\n"
+                        + "\n".join(lines) +
+                        f"\n{SEP}\n"
+                        f"▸  *See you in the café next week.*"
                     ),
                     color=0x3B1F0E
                 )
@@ -192,29 +196,29 @@ class Voice(commands.Cog):
             await interaction.followup.send("Nobody has spent time in a VC yet!")
             return
 
-        medals = ["#1", "#2", "#3"]
+        ranks  = ["✦  #1", "◆  #2", "▸  #3"]
         lines  = []
         for i, row in enumerate(data):
             if row['voice_time'] == 0:
                 continue
             member = interaction.guild.get_member(row['user_id'])
             name   = member.display_name if member else f"User {row['user_id']}"
-            rank   = medals[i] if i < 3 else f"#{i+1}"
+            rank   = ranks[i] if i < 3 else f"      #{i+1}"
             total  = row['voice_time']
             if row['user_id'] in self.voice_sessions:
                 total += int(time.time() - self.voice_sessions[row['user_id']])
-            lines.append(f"{rank} **{name}** — {self._fmt_time(total)}")
+            lines.append(f"{rank}  **{name}** — {self._fmt_time(total)}")
 
         if not lines:
             await interaction.followup.send("Nobody has spent time in a VC yet!")
             return
 
         embed = discord.Embed(
-            title="☕ Voice Time Leaderboard",
-            description="\n".join(lines),
+            title="☕  Voice Time",
+            description=f"*Time spent in the café this week*\n{SEP}\n" + "\n".join(lines),
             color=0x3B1F0E
         )
-        embed.set_footer(text="Resets every Sunday midnight UTC  •  2 XP per minute in VC")
+        embed.set_footer(text="Resets every Sunday midnight UTC  ◆  2 XP per minute in VC")
         await interaction.followup.send(embed=embed)
 
     # ── /voicetime ────────────────────────────────────────────────────────────
@@ -229,8 +233,12 @@ class Voice(commands.Cog):
             total += int(time.time() - self.voice_sessions[target.id])
 
         embed = discord.Embed(
-            title=f"☕ {target.display_name}'s Voice Time",
-            description=f"**{self._fmt_time(total)}** spent in voice channels",
+            title=f"☕  {target.display_name}",
+            description=(
+                f"*Voice channel time*\n"
+                f"{SEP}\n"
+                f"✦  **{self._fmt_time(total)}** spent in the café"
+            ),
             color=0x3B1F0E
         )
         embed.set_thumbnail(url=target.display_avatar.url)
