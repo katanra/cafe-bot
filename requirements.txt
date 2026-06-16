@@ -1,3 +1,6 @@
 discord.py==2.3.2
 python-dotenv==1.0.0
 audioop-lts
+yt-dlp
+PyNaCl
+aiohttp

@@ -2,7 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-SEP = "─" * 28
+SEP = ("· " * 14).strip()
 
 class LFG(commands.Cog):
     def __init__(self, bot):
@@ -15,18 +15,18 @@ class LFG(commands.Cog):
         slots="How many extra players you need (optional)"
     )
     async def lfg(self, interaction: discord.Interaction, game: str, description: str, slots: int = 0):
-        slot_line = f"\n◆  **Slots needed:** {slots}" if slots > 0 else ""
+        slot_line = f"\n→  **Slots needed:** {slots}" if slots > 0 else ""
         embed = discord.Embed(
-            title=f"☕  Looking For Group",
+            title=f"◉  Looking For Group",
             description=(
                 f"*{game}*\n"
                 f"{SEP}\n"
                 f"{description}"
                 f"{slot_line}\n"
                 f"{SEP}\n"
-                f"▸  Posted by {interaction.user.mention}"
+                f"→  Posted by {interaction.user.mention}"
             ),
-            color=0x185FA5
+            color=0xB0C0F5
         )
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         embed.set_footer(text="React below to join.")

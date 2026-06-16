@@ -3,7 +3,7 @@ import datetime
 
 class Database:
     def __init__(self):
-        self.conn = sqlite3.connect('cafe_bot.db')
+        self.conn = sqlite3.connect('cafe_bot.db', check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.create_tables()
 
@@ -122,6 +122,49 @@ class Database:
         ''', (user_id, today))
         row = c.fetchone()
         return row['cnt'] if row else 0
+
+    def get_user_wins(self, user_id):
+        """Total completed duel wins for a specific user."""
+        c = self.conn.cursor()
+        c.execute('''
+            SELECT COUNT(*) as wins FROM duels
+            WHERE winner_id = ? AND status = 'completed'
+        ''', (user_id,))
+        row = c.fetchone()
+        return row['wins'] if row else 0
+
+    def get_duel_rank(self, user_id):
+        """1-based rank of a user on the duel wins leaderboard. Returns 0 if unranked (0 wins)."""
+        wins = self.get_user_wins(user_id)
+        if wins == 0:
+            return 0
+        c = self.conn.cursor()
+        c.execute('''
+            SELECT COUNT(DISTINCT winner_id) as cnt FROM duels
+            WHERE status = 'completed'
+            GROUP BY winner_id
+            HAVING COUNT(*) > ?
+        ''', (wins,))
+        rows = c.fetchall()
+        return len(rows) + 1
+
+    def get_xp_rank(self, user_id):
+        """1-based rank of a user on the XP leaderboard."""
+        c = self.conn.cursor()
+        user = self.get_user(user_id)
+        c.execute('SELECT COUNT(*) as cnt FROM users WHERE xp > ?', (user['xp'],))
+        row = c.fetchone()
+        return (row['cnt'] if row else 0) + 1
+
+    def get_gold_rank(self, user_id):
+        """1-based rank of a user on the gold leaderboard. Returns 0 if they have no gold."""
+        user = self.get_user(user_id)
+        if user['gold'] == 0:
+            return 0
+        c = self.conn.cursor()
+        c.execute('SELECT COUNT(*) as cnt FROM users WHERE gold > ?', (user['gold'],))
+        row = c.fetchone()
+        return (row['cnt'] if row else 0) + 1
 
     def get_duel_leaderboard(self, limit=10):
         c = self.conn.cursor()

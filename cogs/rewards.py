@@ -4,8 +4,8 @@ from discord.ext import commands
 from discord.ext import tasks
 import datetime
 
-DAILY_XP = 50   # Gold is earned ONLY through winning duels
-SEP = "─" * 28
+DAILY_XP = 50
+SEP = ("· " * 14).strip()
 
 class Rewards(commands.Cog):
     def __init__(self, bot):
@@ -46,7 +46,7 @@ class Rewards(commands.Cog):
             remaining = int((midnight - now).total_seconds())
             h, m = remaining // 3600, (remaining % 3600) // 60
             await interaction.response.send_message(
-                f"⏰ You already claimed today's reward!\nCome back in **{h}h {m}m**.",
+                f"→ You already claimed today's reward. Come back in **{h}h {m}m**.",
                 ephemeral=True
             )
             return
@@ -54,15 +54,15 @@ class Rewards(commands.Cog):
         self.bot.db.add_xp(interaction.user.id, DAILY_XP)
 
         embed = discord.Embed(
-            title="☕  Daily Reward",
+            title="◉  Daily Reward",
             description=(
-                f"*Your café allowance for today*\n"
+                f"*your café allowance for today*\n"
                 f"{SEP}\n"
-                f"✦  **+{DAILY_XP} XP** awarded\n\n"
-                f"▸  Want gold? Win a duel.\n"
-                f"▸  Come back tomorrow for more XP."
+                f"→  **+{DAILY_XP} XP** awarded\n\n"
+                f"→  Want gold? Win a duel.\n"
+                f"→  Come back tomorrow for more XP."
             ),
-            color=0x3B6D11
+            color=0xB0C0F5
         )
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         await interaction.response.send_message(embed=embed)

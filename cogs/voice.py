@@ -10,14 +10,24 @@ XP_PER_MINUTE_IN_VC = 2
 # Channel to post milestone announcements in
 MILESTONE_CHANNEL = "general"
 
-SEP = "─" * 28
+SEP = ("· " * 14).strip()
+
+MILESTONES_H = [10, 50, 100, 250, 500]
+TIER_NAMES = {
+    0:   "Newcomer",
+    10:  "Regular",
+    50:  "Veteran",
+    100: "Devoted",
+    250: "Elder",
+    500: "The Café",
+}
 
 MILESTONE_MESSAGES = {
-    10:  "✦  {user} has spent **10 hours** in the café. *A regular.*",
-    50:  "✦  {user} has spent **50 hours** in the café. *Practically lives here.*",
-    100: "✦  {user} has spent **100 hours** in the café. *Are you okay?*",
-    250: "✦  {user} has spent **250 hours** in the café. *The barista knows your order.*",
-    500: "✦  {user} has spent **500 hours** in the café. *You ARE the café.*",
+    10:  "→  {user} has spent **10 hours** in the café. *A regular.*",
+    50:  "→  {user} has spent **50 hours** in the café. *Practically lives here.*",
+    100: "→  {user} has spent **100 hours** in the café. *Are you okay?*",
+    250: "→  {user} has spent **250 hours** in the café. *The barista knows your order.*",
+    500: "→  {user} has spent **500 hours** in the café. *You ARE the café.*",
 }
 
 # Weekly top 3 VC XP rewards (resets Sunday midnight UTC)
@@ -45,6 +55,34 @@ class Voice(commands.Cog):
         if m:
             return f"{m}m {s}s"
         return f"{s}s"
+
+    def _progress_bar(self, total_seconds: int) -> str:
+        """Returns tier name + Unicode progress bar toward next milestone."""
+        hours = total_seconds / 3600
+        current_tier = 0
+        next_ms = None
+        for ms in MILESTONES_H:
+            if hours >= ms:
+                current_tier = ms
+            else:
+                next_ms = ms
+                break
+        tier_name = TIER_NAMES.get(current_tier, "Newcomer")
+        if next_ms is None:
+            # Maxed out at 500h
+            return (
+                f"→  Tier  —  **{tier_name}**  ◉  *max*\n"
+                f"`{'█' * 15}`  {hours:.0f}h reached"
+            )
+        progress = (hours - current_tier) / (next_ms - current_tier)
+        filled   = min(15, int(progress * 15))
+        bar      = "█" * filled + "░" * (15 - filled)
+        next_name = TIER_NAMES.get(next_ms, f"{next_ms}h")
+        return (
+            f"→  Tier  —  **{tier_name}**\n"
+            f"→  Next  —  **{next_name}** ({next_ms}h)\n"
+            f"`{bar}`  {hours:.1f} / {next_ms}h"
+        )
 
     async def _save_session(self, member: discord.Member):
         """Flush session to DB, award XP, check milestones. Returns duration in seconds."""
@@ -80,28 +118,12 @@ class Voice(commands.Cog):
         if not channel:
             return
         for m in milestones:
-            msg = MILESTONE_MESSAGES.get(m, f"☕ {member.mention} hit **{m} hours** in VC!")
+            msg = MILESTONE_MESSAGES.get(m, f"◉ {member.mention} hit **{m} hours** in VC!")
             embed = discord.Embed(
                 description=msg.format(user=member.mention),
-                color=0x3B1F0E
+                color=0xB0C0F5
             )
             await channel.send(embed=embed)
-
-    async def _send_session_dm(self, member: discord.Member, duration: int, xp: int, total: int):
-        try:
-            embed = discord.Embed(
-                title="☕ Session Summary",
-                description=(
-                    f"Thanks for hanging out in the café!\n\n"
-                    f"**Session time:** {self._fmt_time(duration)}\n"
-                    f"**XP earned:** +{xp} ⭐\n"
-                    f"**Total VC time:** {self._fmt_time(total)}"
-                ),
-                color=0x3B1F0E
-            )
-            await member.send(embed=embed)
-        except discord.Forbidden:
-            pass  # DMs closed — ignore silently
 
     async def _check_temp_vc(self, channel: discord.VoiceChannel):
         if channel and channel.id in self.temp_vcs and len(channel.members) == 0:
@@ -130,7 +152,7 @@ class Voice(commands.Cog):
             channel = discord.utils.get(guild.text_channels, name=MILESTONE_CHANNEL)
             if not channel:
                 continue
-            ranks  = ["✦  #1", "◆  #2", "▸  #3"]
+            ranks  = ["→  #1", "→  #2", "→  #3"]
             lines  = []
             for i, row in enumerate(top3[:3]):
                 if row['voice_time'] == 0:
@@ -140,15 +162,15 @@ class Voice(commands.Cog):
                 lines.append(f"{ranks[i]}  **{name}** — +{WEEKLY_VC_REWARDS[i]} XP")
             if lines:
                 embed = discord.Embed(
-                    title="☕  Weekly VC Reset",
+                    title="◉  Weekly VC Reset",
                     description=(
                         f"*The leaderboard has been wiped. Top earners rewarded.*\n"
                         f"{SEP}\n"
                         + "\n".join(lines) +
                         f"\n{SEP}\n"
-                        f"▸  *See you in the café next week.*"
+                        f"→  *See you in the café next week.*"
                     ),
-                    color=0x3B1F0E
+                    color=0xB0C0F5
                 )
                 await channel.send(embed=embed)
 
@@ -196,7 +218,7 @@ class Voice(commands.Cog):
             await interaction.followup.send("Nobody has spent time in a VC yet!")
             return
 
-        ranks  = ["✦  #1", "◆  #2", "▸  #3"]
+        ranks  = ["→  #1", "→  #2", "→  #3"]
         lines  = []
         for i, row in enumerate(data):
             if row['voice_time'] == 0:
@@ -214,11 +236,11 @@ class Voice(commands.Cog):
             return
 
         embed = discord.Embed(
-            title="☕  Voice Time",
+            title="◉  Voice Time",
             description=f"*Time spent in the café this week*\n{SEP}\n" + "\n".join(lines),
-            color=0x3B1F0E
+            color=0xB0C0F5
         )
-        embed.set_footer(text="Resets every Sunday midnight UTC  ◆  2 XP per minute in VC")
+        embed.set_footer(text="Resets every Sunday midnight UTC  ·  2 XP per minute in VC")
         await interaction.followup.send(embed=embed)
 
     # ── /voicetime ────────────────────────────────────────────────────────────
@@ -232,14 +254,18 @@ class Voice(commands.Cog):
         if target.id in self.voice_sessions:
             total += int(time.time() - self.voice_sessions[target.id])
 
+        progress = self._progress_bar(total)
+
         embed = discord.Embed(
-            title=f"☕  {target.display_name}",
+            title=f"◉  {target.display_name}",
             description=(
                 f"*Voice channel time*\n"
                 f"{SEP}\n"
-                f"✦  **{self._fmt_time(total)}** spent in the café"
+                f"→  **{self._fmt_time(total)}**  in the café\n"
+                f"{SEP}\n"
+                f"{progress}"
             ),
-            color=0x3B1F0E
+            color=0xB0C0F5
         )
         embed.set_thumbnail(url=target.display_avatar.url)
         await interaction.response.send_message(embed=embed)
@@ -253,15 +279,14 @@ class Voice(commands.Cog):
             await interaction.response.send_message("❌ Must be used in a server.", ephemeral=True)
             return
 
+        TEMP_VC_CATEGORY = "Temp Channels"   # Name of category to put temp VCs in
+
         guild    = interaction.guild
-        category = None
-        if interaction.user.voice and interaction.user.voice.channel:
+        # Look for the dedicated temp VC category first
+        category = discord.utils.get(guild.categories, name=TEMP_VC_CATEGORY)
+        # Fall back to the user's current VC category
+        if not category and interaction.user.voice and interaction.user.voice.channel:
             category = interaction.user.voice.channel.category
-        else:
-            for cat in guild.categories:
-                if any(isinstance(c, discord.VoiceChannel) for c in cat.channels):
-                    category = cat
-                    break
 
         try:
             channel = await guild.create_voice_channel(
@@ -279,14 +304,14 @@ class Voice(commands.Cog):
                 moved_msg = f"Join here: {channel.mention}"
 
             embed = discord.Embed(
-                title="☕ Temp VC Created",
+                title="◉ Temp VC Created",
                 description=(
                     f"**{channel.name}** is live.\n"
                     f"Limit: {'Unlimited' if limit == 0 else limit}\n"
                     f"{moved_msg}\n\n"
                     f"Auto-deletes when everyone leaves."
                 ),
-                color=0x3B1F0E
+                color=0xB0C0F5
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -300,3 +325,4 @@ class Voice(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(Voice(bot))
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     
