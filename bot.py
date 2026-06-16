@@ -35,10 +35,13 @@ async def load_extensions():
         if filename.endswith('.py'):
             await bot.load_extension(f'cogs.{filename[:-3]}')
 
+GUILD_ID = discord.Object(id=1392757032939163648)
+
 @bot.event
 async def setup_hook():
     await load_extensions()
-    await bot.tree.sync()
+    bot.tree.copy_global_to(guild=GUILD_ID)
+    await bot.tree.sync(guild=GUILD_ID)
     print('✅ Slash commands synced!')
 
 token = os.getenv('DISCORD_TOKEN')
