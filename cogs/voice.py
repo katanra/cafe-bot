@@ -69,7 +69,6 @@ class Voice(commands.Cog):
                 break
         tier_name = TIER_NAMES.get(current_tier, "Newcomer")
         if next_ms is None:
-            # Maxed out at 500h
             return (
                 f"→  Tier  —  **{tier_name}**  ◉  *max*\n"
                 f"`{'█' * 15}`  {hours:.0f}h reached"
@@ -101,7 +100,6 @@ class Voice(commands.Cog):
         if xp > 0:
             self.bot.db.add_xp(user_id, xp)
 
-        # Milestone check
         crossed = self.bot.db.check_new_milestones(user_id, old_total, new_total)
         if crossed and member.guild:
             await self._announce_milestones(member, crossed)
@@ -152,8 +150,8 @@ class Voice(commands.Cog):
             channel = discord.utils.get(guild.text_channels, name=MILESTONE_CHANNEL)
             if not channel:
                 continue
-            ranks  = ["→  #1", "→  #2", "→  #3"]
-            lines  = []
+            ranks = ["→  #1", "→  #2", "→  #3"]
+            lines = []
             for i, row in enumerate(top3[:3]):
                 if row['voice_time'] == 0:
                     continue
@@ -218,8 +216,8 @@ class Voice(commands.Cog):
             await interaction.followup.send("Nobody has spent time in a VC yet!")
             return
 
-        ranks  = ["→  #1", "→  #2", "→  #3"]
-        lines  = []
+        ranks = ["→  #1", "→  #2", "→  #3"]
+        lines = []
         for i, row in enumerate(data):
             if row['voice_time'] == 0:
                 continue
@@ -279,12 +277,10 @@ class Voice(commands.Cog):
             await interaction.response.send_message("❌ Must be used in a server.", ephemeral=True)
             return
 
-        TEMP_VC_CATEGORY = "Temp Channels"   # Name of category to put temp VCs in
+        TEMP_VC_CATEGORY = "Temp Channels"
 
         guild    = interaction.guild
-        # Look for the dedicated temp VC category first
         category = discord.utils.get(guild.categories, name=TEMP_VC_CATEGORY)
-        # Fall back to the user's current VC category
         if not category and interaction.user.voice and interaction.user.voice.channel:
             category = interaction.user.voice.channel.category
 
@@ -304,7 +300,7 @@ class Voice(commands.Cog):
                 moved_msg = f"Join here: {channel.mention}"
 
             embed = discord.Embed(
-                title="◉ Temp VC Created",
+                title="◉  Temp VC Created",
                 description=(
                     f"**{channel.name}** is live.\n"
                     f"Limit: {'Unlimited' if limit == 0 else limit}\n"
@@ -325,4 +321,3 @@ class Voice(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(Voice(bot))
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     
