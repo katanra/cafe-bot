@@ -6,7 +6,6 @@ SEP = ("· " * 14).strip()
 
 # ── XP role tiers ─────────────────────────────────────────────────────────────
 # (min XP, role name) — highest qualifying tier is assigned, others removed.
-# Roles are auto-created in your server if they don't exist yet.
 XP_ROLES = [
     (10000, "Legend"),
     (5000,  "Elder"),
@@ -16,7 +15,6 @@ XP_ROLES = [
 ]
 
 # ── Duel top-3 roles ──────────────────────────────────────────────────────────
-# Assigned to the current top 3 on the duel leaderboard after every confirmed win.
 DUEL_TOP_ROLES = {
     1: "Duel Champion",
     2: "Duel Contender",
@@ -31,7 +29,6 @@ class Roles(commands.Cog):
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     async def _get_or_create_role(self, guild: discord.Guild, name: str) -> discord.Role | None:
-        """Return existing role by name, or create it if missing."""
         role = discord.utils.get(guild.roles, name=name)
         if not role:
             try:
@@ -50,7 +47,6 @@ class Roles(commands.Cog):
         user = self.bot.db.get_user(member.id)
         xp   = user.get('xp', 0)
 
-        # Find highest qualifying tier
         earned_name = None
         for min_xp, role_name in XP_ROLES:
             if xp >= min_xp:
@@ -76,7 +72,6 @@ class Roles(commands.Cog):
         if not guild.me.guild_permissions.manage_roles:
             return
 
-        # Strip all duel top roles from everyone first
         for role_name in DUEL_TOP_ROLES.values():
             role = discord.utils.get(guild.roles, name=role_name)
             if not role:
@@ -87,7 +82,6 @@ class Roles(commands.Cog):
                 except discord.Forbidden:
                     pass
 
-        # Assign to new top 3
         top3 = self.bot.db.get_duel_leaderboard(3)
         for i, row in enumerate(top3[:3], 1):
             if row['wins'] == 0:
@@ -135,8 +129,8 @@ class Roles(commands.Cog):
             description=f"*Earn XP through chat, VC time, and daily rewards*\n{SEP}\n" + "\n".join(lines),
             color=0xB0C0F5
         )
-        embed.add_field(name="→  Your XP",      value=f"**{xp:,}** points",          inline=True)
-        embed.add_field(name="→  Current Role",  value=f"**{earned_name or 'None'}**", inline=True)
+        embed.add_field(name="→  Your XP",     value=f"**{xp:,}** points",          inline=True)
+        embed.add_field(name="→  Current Role", value=f"**{earned_name or 'None'}**", inline=True)
         embed.set_footer(text=footer)
         await interaction.response.send_message(embed=embed)
 
@@ -166,4 +160,3 @@ class Roles(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(Roles(bot))
-bot.add_cog(Roles(bot))
