@@ -174,8 +174,7 @@ class Music(commands.Cog):
         else:
             # Nothing playing — start immediately
             await interaction.followup.send(
-                embed=discord.Embed(description="→  Loading...", color=0xB0C0F5),
-                delete_after=5
+                embed=discord.Embed(description="→  Loading...", color=0xB0C0F5)
             )
             await self._advance(interaction.guild)
 
