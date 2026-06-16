@@ -72,4 +72,10 @@ class Economy(commands.Cog):
     @give.error
     @take.error
     @addxp.error
-    a
+    async def admin_error(self, interaction: discord.Interaction, error):
+        if isinstance(error, app_commands.MissingPermissions):
+            await interaction.response.send_message("→ Administrator permission required.", ephemeral=True)
+
+
+async def setup(bot):
+    await bot.add_cog(Economy(bot))

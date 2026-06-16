@@ -102,4 +102,17 @@ class Profile(commands.Cog):
         elif duel_rank > 3:
             rank_label = f"#{duel_rank}"
         else:
-            ra
+            rank_label = None
+
+        duel_value = f"**{duel_wins}** wins"
+        if rank_label:
+            duel_value += f"  —  **{rank_label}**"
+
+        embed.add_field(name="→  Duel Wins", value=duel_value, inline=True)
+        embed.add_field(name="→  VC Time",   value=vc_block,   inline=False)
+        embed.set_footer(text="Gold is earned through duels  ·  XP through activity")
+        await interaction.response.send_message(embed=embed)
+
+
+async def setup(bot):
+    await bot.add_cog(Profile(bot))

@@ -120,7 +120,6 @@ class Roles(commands.Cog):
             marker = "  ◉  *you are here*" if role_name == earned_name else ""
             lines.append(f"→  **{role_name}** — {min_xp:,} XP{marker}")
 
-        # Next tier info
         next_tier = None
         for min_xp, role_name in reversed(XP_ROLES):
             if xp < min_xp:
@@ -136,7 +135,7 @@ class Roles(commands.Cog):
             description=f"*Earn XP through chat, VC time, and daily rewards*\n{SEP}\n" + "\n".join(lines),
             color=0xB0C0F5
         )
-        embed.add_field(name="→  Your XP",      value=f"**{xp:,}** points",         inline=True)
+        embed.add_field(name="→  Your XP",      value=f"**{xp:,}** points",          inline=True)
         embed.add_field(name="→  Current Role",  value=f"**{earned_name or 'None'}**", inline=True)
         embed.set_footer(text=footer)
         await interaction.response.send_message(embed=embed)
@@ -167,3 +166,4 @@ class Roles(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(Roles(bot))
+bot.add_cog(Roles(bot))

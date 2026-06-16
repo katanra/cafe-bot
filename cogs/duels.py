@@ -289,10 +289,7 @@ class Duels(commands.Cog):
             name   = member.display_name if member else f"User {row['winner_id']}"
             rank   = i + 1
             title  = DUEL_RANK_TITLES.get(rank)
-            if title:
-                prefix = f"**{title}**  {name}"
-            else:
-                prefix = f"#{rank}  {name}"
+            prefix = f"**{title}**  {name}" if title else f"#{rank}  {name}"
             lines.append(f"→  {prefix} — **{row['wins']}** wins")
 
         embed = discord.Embed(
@@ -300,10 +297,10 @@ class Duels(commands.Cog):
             description=f"*top duelists*\n{SEP}\n" + "\n".join(lines),
             color=0xB0C0F5
         )
-        embed.set_footer(text="Gold earned from duels · Top 3 earn server roles")
+        embed.set_footer(text="Gold earned from duels  ·  Top 3 earn server roles")
         await interaction.followup.send(embed=embed)
 
-    @app_commands.command(name="duelvoid", description="Void (cancel) an active duel by channel (Duel Mod only)")
+    @app_commands.command(name="duelvoid", description="Void an active duel by ID (Duel Mod only)")
     @app_commands.describe(duel_id="The duel ID to void")
     async def duelvoid(self, interaction: discord.Interaction, duel_id: int):
         mod_role = discord.utils.get(interaction.guild.roles, name=DUEL_MOD_ROLE)
