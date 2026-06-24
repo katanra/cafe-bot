@@ -51,7 +51,7 @@ async def _create_vc(guild: discord.Guild, name: str, user) -> discord.VoiceChan
 
 # ── Modals ─────────────────────────────────────────────────────────────────────
 
-class CustomLobbyModal(discord.ui.Modal, title="Custom Match — Apex Legends"):
+class CustomLobbyModal(discord.ui.Modal, title="Custom Match  —  Apex Legends"):
     code = discord.ui.TextInput(
         label="Lobby Code",
         placeholder="Paste your lobby code here",
@@ -59,7 +59,7 @@ class CustomLobbyModal(discord.ui.Modal, title="Custom Match — Apex Legends"):
         max_length=30
     )
     notes = discord.ui.TextInput(
-        label="Notes (optional)",
+        label="Notes  (optional)",
         style=discord.TextStyle.paragraph,
         placeholder="Rules, settings, what you need...",
         required=False,
@@ -81,9 +81,9 @@ class CustomLobbyModal(discord.ui.Modal, title="Custom Match — Apex Legends"):
         notes_line = f"\n{SEP}\n→  {notes}" if notes else ""
 
         embed = discord.Embed(
-            title="◉  Custom Match — Apex Legends",
+            title="Custom Match  —  Apex Legends",
             description=(
-                f"*Custom lobby — open to join*\n"
+                f"*Custom lobby  ·  open to join*\n"
                 f"{SEP}\n"
                 f"**Lobby Code**\n"
                 f"```\n{code}\n```"
@@ -92,15 +92,14 @@ class CustomLobbyModal(discord.ui.Modal, title="Custom Match — Apex Legends"):
                 f"{SEP}\n"
                 f"→  Hosted by {interaction.user.mention}"
             ),
-            color=0xF1C40F   # gold — stands out from regular LFG posts
+            color=0xF1C40F
         )
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         embed.set_footer(text="Copy the code above  ·  React to join the host's VC")
 
         msg = await _send_lfg(interaction, embed)
         self.cog._track(msg, interaction.user.id, vc)
-
-        await interaction.response.send_message("→ Custom lobby posted!", ephemeral=True)
+        await interaction.response.send_message("→  Custom lobby posted!", ephemeral=True)
 
 
 class OtherGameModal(discord.ui.Modal, title="Post LFG"):
@@ -116,7 +115,7 @@ class OtherGameModal(discord.ui.Modal, title="Post LFG"):
         max_length=300
     )
     slots = discord.ui.TextInput(
-        label="Slots needed (optional)",
+        label="Slots needed  (optional)",
         placeholder="e.g. 2",
         required=False,
         max_length=2
@@ -136,15 +135,14 @@ class OtherGameModal(discord.ui.Modal, title="Post LFG"):
         except ValueError:
             pass
 
-        vc      = await _create_vc(interaction.guild, game, interaction.user) if self.create_vc else None
-        embed   = _build_apex_embed(interaction.user, game, None, None, slots, vc, desc)
-        msg     = await _send_lfg(interaction, embed)
+        vc    = await _create_vc(interaction.guild, game, interaction.user) if self.create_vc else None
+        embed = _build_embed(interaction.user, game, None, None, slots, vc, desc)
+        msg   = await _send_lfg(interaction, embed)
         self.cog._track(msg, interaction.user.id, vc)
+        await interaction.response.send_message("→  LFG posted!", ephemeral=True)
 
-        await interaction.response.send_message("→ LFG posted!", ephemeral=True)
 
-
-# ── Rank select (shown after Ranked BR is pressed) ─────────────────────────────
+# ── Rank select ────────────────────────────────────────────────────────────────
 
 class ApexRankView(discord.ui.View):
     def __init__(self, cog, create_vc: bool = True):
@@ -152,7 +150,7 @@ class ApexRankView(discord.ui.View):
         self.cog       = cog
         self.create_vc = create_vc
         sel            = discord.ui.Select(
-            placeholder="Select your rank...",
+            placeholder="Choose your rank...",
             options=APEX_RANK_OPTIONS
         )
         sel.callback = self._on_rank
@@ -160,17 +158,20 @@ class ApexRankView(discord.ui.View):
 
     async def _on_rank(self, interaction: discord.Interaction):
         rank = interaction.data["values"][0]
-
-        # Acknowledge immediately, do work after
-        await interaction.response.edit_message(content="→ LFG posted!", view=None, embeds=[])
-
+        await interaction.response.edit_message(content="→  LFG posted!", view=None, embeds=[])
         vc    = await _create_vc(interaction.guild, "Apex Legends", interaction.user) if self.create_vc else None
-        embed = _build_apex_embed(interaction.user, "Apex Legends", "Ranked BR", rank, 0, vc)
+        embed = _build_embed(interaction.user, "Apex Legends", "Ranked BR", rank, 0, vc)
         msg   = await _send_lfg(interaction, embed)
         self.cog._track(msg, interaction.user.id, vc)
 
 
 # ── Apex mode buttons ──────────────────────────────────────────────────────────
+#
+#  Color guide:
+#    primary   (blurple) = standard BR modes
+#    secondary (grey)    = casual / arcade modes
+#    danger    (red)     = Ranked  (competitive — stands out)
+#    success   (green)   = Custom Match (unique / special)
 
 class ApexModeView(discord.ui.View):
     def __init__(self, cog, create_vc: bool = True):
@@ -179,61 +180,52 @@ class ApexModeView(discord.ui.View):
         self.create_vc = create_vc
 
     async def _post(self, interaction: discord.Interaction, mode: str):
-        """Post a standard Apex LFG immediately."""
-        await interaction.response.edit_message(content="→ LFG posted!", view=None, embeds=[])
+        await interaction.response.edit_message(content="→  LFG posted!", view=None, embeds=[])
         vc    = await _create_vc(interaction.guild, "Apex Legends", interaction.user) if self.create_vc else None
-        embed = _build_apex_embed(interaction.user, "Apex Legends", mode, None, 0, vc)
+        embed = _build_embed(interaction.user, "Apex Legends", mode, None, 0, vc)
         msg   = await _send_lfg(interaction, embed)
         self.cog._track(msg, interaction.user.id, vc)
 
-    # Row 0
-    @discord.ui.button(label="BR Trios",  style=discord.ButtonStyle.primary,   row=0)
-    async def br_trios(self, i, b):
-        await self._post(i, "BR Trios")
+    # Row 0  ——  Battle Royale
+    @discord.ui.button(label="BR Trios",   style=discord.ButtonStyle.primary,   row=0)
+    async def br_trios(self, i, b):  await self._post(i, "BR Trios")
 
-    @discord.ui.button(label="BR Duos",   style=discord.ButtonStyle.primary,   row=0)
-    async def br_duos(self, i, b):
-        await self._post(i, "BR Duos")
+    @discord.ui.button(label="BR Duos",    style=discord.ButtonStyle.primary,   row=0)
+    async def br_duos(self, i, b):   await self._post(i, "BR Duos")
 
-    @discord.ui.button(label="BR Solos",  style=discord.ButtonStyle.primary,   row=0)
-    async def br_solos(self, i, b):
-        await self._post(i, "BR Solos")
+    @discord.ui.button(label="BR Solos",   style=discord.ButtonStyle.primary,   row=0)
+    async def br_solos(self, i, b):  await self._post(i, "BR Solos")
 
-    @discord.ui.button(label="Ranked BR", style=discord.ButtonStyle.danger,    row=0)
+    @discord.ui.button(label="Ranked BR",  style=discord.ButtonStyle.danger,    row=0)
     async def ranked_br(self, i, b):
         await i.response.edit_message(
-            content="→ Select your rank:",
+            content="→  Select your rank:",
             view=ApexRankView(self.cog, self.create_vc),
             embeds=[]
         )
 
-    @discord.ui.button(label="Mixtape",   style=discord.ButtonStyle.secondary, row=0)
-    async def mixtape(self, i, b):
-        await self._post(i, "Mixtape")
+    @discord.ui.button(label="Mixtape",    style=discord.ButtonStyle.secondary, row=0)
+    async def mixtape(self, i, b):   await self._post(i, "Mixtape")
 
-    # Row 1
+    # Row 1  ——  Arcade & Custom
     @discord.ui.button(label="TDM",          style=discord.ButtonStyle.secondary, row=1)
-    async def tdm(self, i, b):
-        await self._post(i, "TDM")
+    async def tdm(self, i, b):       await self._post(i, "TDM")
 
     @discord.ui.button(label="Gun Run",       style=discord.ButtonStyle.secondary, row=1)
-    async def gun_run(self, i, b):
-        await self._post(i, "Gun Run")
+    async def gun_run(self, i, b):   await self._post(i, "Gun Run")
 
     @discord.ui.button(label="Control",       style=discord.ButtonStyle.secondary, row=1)
-    async def control(self, i, b):
-        await self._post(i, "Control")
+    async def control(self, i, b):   await self._post(i, "Control")
 
     @discord.ui.button(label="1v1 Duel",      style=discord.ButtonStyle.secondary, row=1)
-    async def duel_1v1(self, i, b):
-        await self._post(i, "1v1 Duel")
+    async def duel_1v1(self, i, b):  await self._post(i, "1v1 Duel")
 
     @discord.ui.button(label="Custom Match",  style=discord.ButtonStyle.success,   row=1)
     async def custom_match(self, i, b):
         await i.response.send_modal(CustomLobbyModal(self.cog, self.create_vc))
 
 
-# ── Game select (entry point) ──────────────────────────────────────────────────
+# ── Game select ────────────────────────────────────────────────────────────────
 
 class GameSelectView(discord.ui.View):
     def __init__(self, cog, create_vc: bool = True):
@@ -241,22 +233,49 @@ class GameSelectView(discord.ui.View):
         self.cog       = cog
         self.create_vc = create_vc
 
-    @discord.ui.button(label="Apex Legends",  style=discord.ButtonStyle.primary,   row=0)
+    @discord.ui.button(label="Apex Legends",   style=discord.ButtonStyle.primary,   row=0)
     async def apex(self, interaction: discord.Interaction, button):
         await interaction.response.edit_message(
-            content="→ Select a game mode:",
+            content="→  Select a game mode:",
             view=ApexModeView(self.cog, self.create_vc),
             embeds=[]
         )
 
-    @discord.ui.button(label="Other game...", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="Other game...",  style=discord.ButtonStyle.secondary, row=0)
     async def other(self, interaction: discord.Interaction, button):
         await interaction.response.send_modal(OtherGameModal(self.cog, self.create_vc))
 
 
+# ── VC choice (entry point) ────────────────────────────────────────────────────
+#
+#  First thing shown when /lfg is run or the panel button is pressed.
+#  success (green) = Yes  ·  secondary (grey) = No
+
+class VCChoiceView(discord.ui.View):
+    def __init__(self, cog):
+        super().__init__(timeout=120)
+        self.cog = cog
+
+    @discord.ui.button(label="Yes, create one",   style=discord.ButtonStyle.success,   row=0)
+    async def yes_vc(self, interaction: discord.Interaction, button):
+        await interaction.response.edit_message(
+            content="→  Select a game:",
+            view=GameSelectView(self.cog, create_vc=True),
+            embeds=[]
+        )
+
+    @discord.ui.button(label="No, just post it",  style=discord.ButtonStyle.secondary, row=0)
+    async def no_vc(self, interaction: discord.Interaction, button):
+        await interaction.response.edit_message(
+            content="→  Select a game:",
+            view=GameSelectView(self.cog, create_vc=False),
+            embeds=[]
+        )
+
+
 # ── Embed builders ─────────────────────────────────────────────────────────────
 
-def _build_apex_embed(
+def _build_embed(
     user: discord.Member,
     game: str,
     mode: str | None,
@@ -267,28 +286,28 @@ def _build_apex_embed(
 ) -> discord.Embed:
     lines = []
     if mode:
-        lines.append(f"→  **Mode:** {mode}")
+        lines.append(f"→  **Mode** · {mode}")
     if rank:
-        lines.append(f"→  **Rank:** {rank}")
+        lines.append(f"→  **Rank** · {rank}")
     if slots > 0:
-        lines.append(f"→  **Slots needed:** {slots}")
+        lines.append(f"→  **Slots** · {slots} needed")
     if description:
         lines.append(f"→  {description}")
     if vc:
-        lines.append(f"→  Voice channel: {vc.mention}")
+        lines.append(f"→  **Voice** · {vc.mention}")
 
     embed = discord.Embed(
-        title=f"◉  Looking For Group — {game}",
+        title=f"Looking For Group  ·  {game}",
         description=(
             f"{SEP}\n"
             + ("\n".join(lines) or "→  Looking for players") +
             f"\n{SEP}\n"
-            f"→  Posted by {user.mention}"
+            f"→  {user.mention}"
         ),
         color=0xB0C0F5
     )
     embed.set_thumbnail(url=user.display_avatar.url)
-    embed.set_footer(text="React [+] to join host's VC  ·  Remove to go back")
+    embed.set_footer(text="React [+] to join  ·  Un-react to leave")
     return embed
 
 
@@ -320,17 +339,24 @@ class LFG(commands.Cog):
         if vc:
             self.lfg_vcs[vc.id] = msg.id
 
-    async def start_lfg_flow(self, interaction: discord.Interaction, create_vc: bool = True):
+    async def start_lfg_flow(self, interaction: discord.Interaction):
+        embed = discord.Embed(
+            description=(
+                f"*Setting up your LFG post*\n"
+                f"{SEP}\n"
+                f"→  Create a custom voice channel for your group?"
+            ),
+            color=0xB0C0F5
+        )
         await interaction.response.send_message(
-            "→ Select a game:",
-            view=GameSelectView(self, create_vc),
+            embed=embed,
+            view=VCChoiceView(self),
             ephemeral=True
         )
 
     @app_commands.command(name="lfg", description="Post a Looking For Group listing")
-    @app_commands.describe(create_vc="Create a voice channel for your group? (default: yes)")
-    async def lfg(self, interaction: discord.Interaction, create_vc: bool = True):
-        await self.start_lfg_flow(interaction, create_vc)
+    async def lfg(self, interaction: discord.Interaction):
+        await self.start_lfg_flow(interaction)
 
     # ── Auto-delete VC when empty ──────────────────────────────────────────────
 
@@ -345,7 +371,7 @@ class LFG(commands.Cog):
                     pass
                 self.lfg_vcs.pop(vc_id, None)
 
-    # ── React → move to host VC ───────────────────────────────────────────────
+    # ── React to join host VC ─────────────────────────────────────────────────
 
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
@@ -373,7 +399,7 @@ class LFG(commands.Cog):
         if not poster or not poster.voice or not poster.voice.channel:
             if text_channel:
                 await text_channel.send(
-                    f"→ {reactor.mention} The host isn't in a voice channel right now.",
+                    f"→  {reactor.mention} The host isn't in a voice channel right now.",
                     delete_after=8
                 )
             return
@@ -383,12 +409,12 @@ class LFG(commands.Cog):
         if not reactor.voice or not reactor.voice.channel:
             try:
                 await reactor.send(
-                    f"→ Join any voice channel first, then react to be moved to **{target_vc.name}**!"
+                    f"→  Join any voice channel first, then react to be moved to **{target_vc.name}**!"
                 )
             except discord.Forbidden:
                 if text_channel:
                     await text_channel.send(
-                        f"→ {reactor.mention} Join a VC first, then react to be moved to {target_vc.mention}!",
+                        f"→  {reactor.mention} Join a VC first, then react to be moved to {target_vc.mention}!",
                         delete_after=10
                     )
             return
@@ -402,7 +428,7 @@ class LFG(commands.Cog):
         except Exception:
             self.origins[payload.message_id].pop(reactor.id, None)
 
-    # ── Un-react → move back ──────────────────────────────────────────────────
+    # ── Un-react to go back ───────────────────────────────────────────────────
 
     @commands.Cog.listener()
     async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent):
