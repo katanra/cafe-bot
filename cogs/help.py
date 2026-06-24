@@ -6,30 +6,30 @@ SEP = ("· " * 14).strip()
 
 
 COMMANDS = {
-    "💰  Economy": [
+    "Economy": [
         ("/balance",     "Check your Gold and XP"),
         ("/daily",       "Claim your daily XP reward (resets midnight UTC)"),
         ("/leaderboard", "Server rankings — XP, Gold, or Voice Time"),
         ("/shop",        "Browse the gold shop"),
         ("/buy",         "Spend gold on shop items"),
     ],
-    "⚔️  Duels": [
+    "Duels": [
         ("/duel",        "Challenge someone to a 1v1 for gold"),
         ("/duelboard",   "Top duelists leaderboard"),
         ("/duelrules",   "Full ruleset for café duels"),
         ("/duelvoid",    "Void a duel by ID  *(Duel Mod only)*"),
     ],
-    "🎖️  Roles": [
+    "Roles": [
         ("/roles",       "Show XP tier roles and your current rank"),
         ("/updateroles", "Force-refresh all member roles  *(Admin)*"),
     ],
-    "🎙️  Voice": [
+    "Voice": [
         ("/voicetime",   "Check your voice channel time"),
         ("/vctop",       "Voice time leaderboard"),
         ("/createvc",    "Create a temporary voice channel"),
     ],
-    "🎵  Music": [
-        ("/play",        "Play a song by name or YouTube URL"),
+    "Music": [
+        ("/play",        "Play a song by name, YouTube URL, or Spotify link"),
         ("/queue",       "View the current queue"),
         ("/nowplaying",  "Show the current track"),
         ("/skip",        "Skip the current song"),
@@ -40,12 +40,12 @@ COMMANDS = {
         ("/loop",        "Toggle loop mode"),
         ("/shuffle",     "Shuffle the queue"),
     ],
-    "🎮  Fun": [
+    "Fun": [
         ("/8ball",       "Ask the magic 8-ball a question"),
         ("/coinflip",    "Flip a coin"),
         ("/roll",        "Roll a dice (default: d6)"),
     ],
-    "🔍  Profile": [
+    "Profile": [
         ("/profile",     "View your full café profile"),
         ("/apexstats",   "Look up Apex Legends stats for any player"),
         ("/lfg",         "Post a Looking For Group listing"),

@@ -53,9 +53,8 @@ class Fun(commands.Cog):
     @app_commands.command(name="coinflip", description="Flip a coin")
     async def coinflip(self, interaction: discord.Interaction):
         result = random.choice(["Heads", "Tails"])
-        emoji  = "🪙"
         embed = discord.Embed(
-            title=f"◉  {emoji} Coin Flip",
+            title="◉  Coin Flip",
             description=(
                 f"{SEP}\n"
                 f"→  **{result}!**"

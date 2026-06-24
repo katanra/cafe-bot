@@ -9,20 +9,15 @@ LFG_VC_CATEGORY = "LFG"   # bot looks for this category first; falls back to no 
 # ── Apex rank options ──────────────────────────────────────────────────────────
 
 APEX_RANK_OPTIONS = [
-    discord.SelectOption(label="Predator",  emoji="🔴", value="Predator",  description="Top 750 per platform"),
-    discord.SelectOption(label="Master",    emoji="🟣", value="Master",    description="Masters tier"),
-    discord.SelectOption(label="Diamond",   emoji="💎", value="Diamond",   description="Diamond tier"),
-    discord.SelectOption(label="Platinum",  emoji="🔵", value="Platinum",  description="Platinum tier"),
-    discord.SelectOption(label="Gold",      emoji="🟡", value="Gold",      description="Gold tier"),
-    discord.SelectOption(label="Silver",    emoji="⬜", value="Silver",    description="Silver tier"),
-    discord.SelectOption(label="Bronze",    emoji="🟫", value="Bronze",    description="Bronze tier"),
-    discord.SelectOption(label="Rookie",    emoji="🆕", value="Rookie",    description="Starting out"),
+    discord.SelectOption(label="Predator",  value="Predator",  description="Top 750 per platform"),
+    discord.SelectOption(label="Master",    value="Master",    description="Masters tier"),
+    discord.SelectOption(label="Diamond",   value="Diamond",   description="Diamond tier"),
+    discord.SelectOption(label="Platinum",  value="Platinum",  description="Platinum tier"),
+    discord.SelectOption(label="Gold",      value="Gold",      description="Gold tier"),
+    discord.SelectOption(label="Silver",    value="Silver",    description="Silver tier"),
+    discord.SelectOption(label="Bronze",    value="Bronze",    description="Bronze tier"),
+    discord.SelectOption(label="Rookie",    value="Rookie",    description="Starting out"),
 ]
-
-RANK_EMOJIS = {
-    "Predator": "🔴", "Master": "🟣", "Diamond": "💎", "Platinum": "🔵",
-    "Gold": "🟡",     "Silver": "⬜",  "Bronze": "🟫",  "Rookie": "🆕",
-}
 
 # ── Apex mode options ──────────────────────────────────────────────────────────
 
@@ -51,10 +46,9 @@ class ApexRankSelect(discord.ui.Select):
         )
 
     async def callback(self, interaction: discord.Interaction):
-        rank  = self.values[0]
-        emoji = RANK_EMOJIS.get(rank, "")
+        rank = self.values[0]
         await interaction.response.send_message(
-            f"→ {interaction.user.mention} is **{emoji} {rank}**"
+            f"→ {interaction.user.mention} is **{rank}**"
         )
 
 
@@ -129,7 +123,7 @@ class LFG(commands.Cog):
 
         # ── Build embed ────────────────────────────────────────────────────────
         slot_line = f"\n→  **Slots needed:** {slots}" if slots > 0 else ""
-        vc_line   = f"\n→  🔊 Voice channel: {vc.mention}" if vc else ""
+        vc_line   = f"\n→  Voice channel: {vc.mention}" if vc else ""
         mode_hint = "\n→  Use the **game mode** dropdown to show what you're queuing." if is_apex else ""
 
         embed = discord.Embed(
@@ -147,7 +141,7 @@ class LFG(commands.Cog):
             color=0xB0C0F5
         )
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
-        footer = "React ✅ to join host's VC  ·  Remove to go back  ·  Set your rank below"
+        footer = "React [+] to join host's VC  ·  Remove to go back  ·  Set your rank below"
         if is_apex:
             footer += "  ·  Pick a game mode"
         embed.set_footer(text=footer)

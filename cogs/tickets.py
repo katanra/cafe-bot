@@ -48,10 +48,17 @@ class CloseConfirmView(discord.ui.View):
             item.disabled = True
         await interaction.response.edit_message(content="→ Closing in 5 seconds.", view=self)
         await asyncio.sleep(5)
+        category = interaction.channel.category
         try:
             await interaction.channel.delete(reason=f"Ticket closed by {interaction.user}")
         except Exception:
-            pass
+            return
+        # If category is now empty, delete it
+        if category and len(category.channels) == 0:
+            try:
+                await category.delete(reason="All tickets resolved — category auto-removed")
+            except Exception:
+                pass
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -79,7 +86,7 @@ class CloseTicketView(discord.ui.View):
             (staff_role and staff_role in interaction.user.roles)
             or interaction.user.guild_permissions.manage_channels
         )
-        is_owner   = interaction.channel.name == f"ticket-{interaction.user.id}"
+        is_owner   = interaction.channel.name == f"ticket-{interaction.user.name}"
 
         if not (is_staff or is_owner):
             await interaction.response.send_message(
@@ -117,7 +124,7 @@ class TicketTypeSelect(discord.ui.Select):
         user        = interaction.user
 
         # One ticket at a time
-        existing = discord.utils.get(guild.text_channels, name=f"ticket-{user.id}")
+        existing = discord.utils.get(guild.text_channels, name=f"ticket-{user.name}")
         if existing:
             await interaction.response.send_message(
                 f"→ You already have an open ticket: {existing.mention}",
@@ -172,7 +179,7 @@ class TicketTypeSelect(discord.ui.Select):
 
         try:
             channel = await guild.create_text_channel(
-                name=f"ticket-{user.id}",
+                name=f"ticket-{user.name}",
                 category=category,
                 overwrites=overwrites,
                 topic=f"{info['label']} — {user.display_name}",

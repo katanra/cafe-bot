@@ -24,12 +24,12 @@ def _streak_bar(streak: int) -> str:
     milestones = sorted(STREAK_BONUSES.keys())
     next_ms = next((m for m in milestones if m > streak), None)
     if next_ms is None:
-        return f"🔥 **{streak}-day streak** — *max milestone reached!*"
+        return f"~ **{streak}-day streak** — *max milestone reached!*"
     prev_ms = max((m for m in milestones if m <= streak), default=0)
     progress = (streak - prev_ms) / (next_ms - prev_ms)
     filled   = min(10, int(progress * 10))
     bar      = "█" * filled + "░" * (10 - filled)
-    return f"🔥 **{streak}-day streak**\n`{bar}`  {streak} / {next_ms} days"
+    return f"~ **{streak}-day streak**\n`{bar}`  {streak} / {next_ms} days"
 
 
 class Rewards(commands.Cog):
@@ -102,7 +102,7 @@ class Rewards(commands.Cog):
 
         xp_line = f"→  **+{base} XP** awarded" + (" *(2x Lucky Daily!)*" if lucky else "")
         if bonus:
-            xp_line += f"\n→  🎉 **+{bonus} XP** streak bonus!" + (" *(doubled!)*" if lucky else "")
+            xp_line += f"\n→  + **+{bonus} XP** streak bonus!" + (" *(doubled!)*" if lucky else "")
 
         embed = discord.Embed(
             title="◉  Daily Reward",

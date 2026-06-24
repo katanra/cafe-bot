@@ -111,7 +111,7 @@ class Profile(commands.Cog):
 
         embed.add_field(name="→  Duel Wins", value=duel_value, inline=True)
 
-        streak_value = f"🔥 **{streak}** days" if streak > 0 else "*No active streak*"
+        streak_value = f"~ **{streak}** days" if streak > 0 else "*No active streak*"
         embed.add_field(name="→  Daily Streak", value=streak_value, inline=True)
 
         embed.add_field(name="→  VC Time",   value=vc_block,   inline=False)

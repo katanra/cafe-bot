@@ -12,28 +12,28 @@ SHOP_ITEMS = [
         "name":  "XP Boost",
         "cost":  250,
         "desc":  "Instantly gain **300 XP**.",
-        "emoji": "⚡",
+        "emoji": "+",
     },
     {
         "id":    "big_xp_boost",
         "name":  "Big XP Boost",
         "cost":  600,
         "desc":  "Instantly gain **800 XP**.",
-        "emoji": "🚀",
+        "emoji": "++",
     },
     {
         "id":    "duel_reset",
         "name":  "Duel Reset",
         "cost":  300,
         "desc":  "Skip your 30-minute duel cooldown once.",
-        "emoji": "⏱️",
+        "emoji": "~",
     },
     {
         "id":    "lucky_daily",
         "name":  "Lucky Daily",
         "cost":  400,
         "desc":  "Your next `/daily` gives **double XP**.",
-        "emoji": "🍀",
+        "emoji": "*",
     },
 ]
 
@@ -97,7 +97,7 @@ class Shop(commands.Cog):
     async def buy(self, interaction: discord.Interaction, item: str):
         shop_item = ITEM_MAP.get(item)
         if not shop_item:
-            await interaction.response.send_message("❌ Unknown item.", ephemeral=True)
+            await interaction.response.send_message("[x] Unknown item.", ephemeral=True)
             return
 
         # Check and deduct gold

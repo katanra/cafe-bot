@@ -19,7 +19,7 @@ bot.db = Database()
 
 @bot.event
 async def on_ready():
-    print(f'✅ {bot.user} is online and ready!')
+    print(f'{bot.user} is online and ready!')
     print(f'Connected to {len(bot.guilds)} server(s)')
     # Clear any stale voice sessions from previous run
     for guild in bot.guilds:
@@ -44,7 +44,7 @@ async def load_extensions():
             try:
                 await bot.load_extension(f'cogs.{filename[:-3]}')
             except Exception as e:
-                print(f'⚠️  Failed to load {filename}: {e}')
+                print(f'[!] Failed to load {filename}: {e}')
 
 @bot.event
 async def on_command_error(ctx, error):
@@ -53,13 +53,13 @@ async def on_command_error(ctx, error):
 
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
-    msg = "❌ Something went wrong. Try again in a moment."
+    msg = "[x] Something went wrong. Try again in a moment."
     if isinstance(error, discord.app_commands.MissingPermissions):
-        msg = "❌ You don't have permission to use that command."
+        msg = "[x] You don't have permission to use that command."
     elif isinstance(error, discord.app_commands.CommandOnCooldown):
-        msg = f"❌ Slow down! Try again in **{error.retry_after:.0f}s**."
+        msg = f"[x] Slow down! Try again in **{error.retry_after:.0f}s**."
     elif isinstance(error, discord.app_commands.BotMissingPermissions):
-        msg = "❌ I'm missing permissions to do that. Check my role settings."
+        msg = "[x] I'm missing permissions to do that. Check my role settings."
     try:
         if interaction.response.is_done():
             await interaction.followup.send(msg, ephemeral=True)
@@ -79,7 +79,7 @@ async def setup_hook():
     # Clear global commands so they don't appear twice alongside guild ones
     bot.tree.clear_commands(guild=None)
     await bot.tree.sync()
-    print('✅ Slash commands synced!')
+    print('Slash commands synced.')
 
 token = os.getenv('DISCORD_TOKEN')
 if not token:

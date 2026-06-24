@@ -277,12 +277,10 @@ class Voice(commands.Cog):
             await interaction.response.send_message("❌ Must be used in a server.", ephemeral=True)
             return
 
-        TEMP_VC_CATEGORY = "Temp Channels"
+        TEMP_VC_CATEGORY_ID = 1515950863422586950
 
         guild    = interaction.guild
-        category = discord.utils.get(guild.categories, name=TEMP_VC_CATEGORY)
-        if not category and interaction.user.voice and interaction.user.voice.channel:
-            category = interaction.user.voice.channel.category
+        category = guild.get_channel(TEMP_VC_CATEGORY_ID)
 
         try:
             channel = await guild.create_voice_channel(

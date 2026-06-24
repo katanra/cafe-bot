@@ -275,7 +275,7 @@ class Duels(commands.Cog):
         original = getattr(error, 'original', error)
         tb = ''.join(traceback.format_exception(type(original), original, original.__traceback__))
         print(f"[Duel Error]\n{tb}")
-        msg = f"❌ **Duel error** (copy this and send it):\n```\n{type(original).__name__}: {original}\n```"
+        msg = f"[x] **Duel error** (copy this and send it):\n```\n{type(original).__name__}: {original}\n```"
         try:
             if interaction.response.is_done():
                 await interaction.followup.send(msg, ephemeral=True)

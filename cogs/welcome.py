@@ -44,7 +44,7 @@ class Welcome(commands.Cog):
             description=(
                 f"*a new face walks through the door*\n"
                 f"{SEP}\n"
-                f"→  Hey {member.mention}, welcome to the café! ☕\n"
+                f"→  Hey {member.mention}, welcome to the café.\n"
                 f"→  You're member **#{member_count}**.\n"
                 f"{SEP}\n"
                 f"→  Use `/daily` to claim XP every day.\n"
