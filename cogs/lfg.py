@@ -153,7 +153,12 @@ class LFG(commands.Cog):
         embed.set_footer(text=footer)
 
         view = LFGView(is_apex=is_apex)
-        await interaction.response.send_message(embed=embed, view=view)
+        lfg_ping_role = discord.utils.get(guild.roles, name="LFG Ping")
+        await interaction.response.send_message(
+            content=lfg_ping_role.mention if lfg_ping_role else None,
+            embed=embed,
+            view=view
+        )
         msg = await interaction.original_response()
         await msg.add_reaction("✅")
 

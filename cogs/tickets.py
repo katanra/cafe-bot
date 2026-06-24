@@ -5,53 +5,48 @@ import asyncio
 
 SEP             = ("· " * 14).strip()
 TICKET_CATEGORY = "Tickets"
-STAFF_ROLE      = "Staff"   # change this if your staff role has a different name
+STAFF_ROLE      = "Staff"   # change to match your staff role name
 
 TICKET_TYPES = {
     "complaint": {
         "label":  "Complaint",
-        "emoji":  "📋",
-        "color":  0xE57373,
+        "desc":   "Report a player, bug, or issue to staff",
         "prompt": (
-            "Please describe your complaint below.\n"
+            "Describe your complaint below.\n"
             "→  What happened?\n"
             "→  Who was involved?\n"
-            "→  Any screenshots or evidence?"
+            "→  Any evidence or screenshots?"
         ),
     },
     "question": {
         "label":  "General Question",
-        "emoji":  "❓",
-        "color":  0xB0C0F5,
-        "prompt": "Go ahead and ask your question — staff will reply as soon as possible.",
+        "desc":   "Ask about rules, features, or anything else",
+        "prompt": "Ask your question below and staff will reply as soon as possible.",
     },
     "staff_app": {
         "label":  "Staff Application",
-        "emoji":  "📝",
-        "color":  0x81C784,
+        "desc":   "Apply to join the moderation team",
         "prompt": (
-            "Please answer the following in your next message:\n"
-            "→  **Age:**\n"
-            "→  **Timezone:**\n"
-            "→  **Why do you want to be staff?**\n"
-            "→  **Any previous moderation experience?**\n"
-            "→  **How active are you per week?**"
+            "Answer the following in your next message:\n"
+            "→  Age:\n"
+            "→  Timezone:\n"
+            "→  Why do you want to be staff?\n"
+            "→  Any moderation experience?\n"
+            "→  How active are you per week?"
         ),
     },
 }
 
 
-# ── Close confirm ──────────────────────────────────────────────────────────────
-
 class CloseConfirmView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=30)
 
-    @discord.ui.button(label="Yes, close it", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="Close it", style=discord.ButtonStyle.danger)
     async def yes_close(self, interaction: discord.Interaction, button: discord.ui.Button):
         for item in self.children:
             item.disabled = True
-        await interaction.response.edit_message(content="→ Closing in 5 seconds…", view=self)
+        await interaction.response.edit_message(content="→ Closing in 5 seconds.", view=self)
         await asyncio.sleep(5)
         try:
             await interaction.channel.delete(reason=f"Ticket closed by {interaction.user}")
@@ -69,14 +64,12 @@ class CloseConfirmView(discord.ui.View):
             item.disabled = True
 
 
-# ── Close button (persistent — survives restarts) ──────────────────────────────
-
 class CloseTicketView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
     @discord.ui.button(
-        label="🔒 Close Ticket",
+        label="Close Ticket",
         style=discord.ButtonStyle.danger,
         custom_id="tickets:close"
     )
@@ -86,8 +79,7 @@ class CloseTicketView(discord.ui.View):
             (staff_role and staff_role in interaction.user.roles)
             or interaction.user.guild_permissions.manage_channels
         )
-        # Ticket channels are named ticket-{user_id}
-        is_owner = interaction.channel.name == f"ticket-{interaction.user.id}"
+        is_owner   = interaction.channel.name == f"ticket-{interaction.user.id}"
 
         if not (is_staff or is_owner):
             await interaction.response.send_message(
@@ -96,30 +88,22 @@ class CloseTicketView(discord.ui.View):
             return
 
         await interaction.response.send_message(
-            "→ Are you sure you want to close this ticket?",
-            view=CloseConfirmView()
+            "→ Close this ticket?", view=CloseConfirmView()
         )
 
-
-# ── Ticket type dropdown (persistent) ─────────────────────────────────────────
 
 class TicketTypeSelect(discord.ui.Select):
     def __init__(self):
         options = [
             discord.SelectOption(
                 label=info["label"],
-                emoji=info["emoji"],
                 value=key,
-                description={
-                    "complaint":  "Report a player or issue",
-                    "question":   "Ask the staff anything",
-                    "staff_app":  "Apply to join the staff team",
-                }[key]
+                description=info["desc"]
             )
             for key, info in TICKET_TYPES.items()
         ]
         super().__init__(
-            placeholder="Open a support ticket…",
+            placeholder="Choose a ticket type to get started...",
             options=options,
             min_values=1,
             max_values=1,
@@ -141,7 +125,7 @@ class TicketTypeSelect(discord.ui.Select):
             )
             return
 
-        # Find or create the Tickets category
+        # Find or create Tickets category
         category = discord.utils.get(guild.categories, name=TICKET_CATEGORY)
         if not category:
             try:
@@ -163,17 +147,16 @@ class TicketTypeSelect(discord.ui.Select):
                 )
             except discord.Forbidden:
                 await interaction.response.send_message(
-                    "→ I don't have permission to create channels. "
-                    "Ask an admin to give me **Manage Channels** permission.",
+                    "→ I need the Manage Channels permission to create tickets. Ask an admin.",
                     ephemeral=True
                 )
                 return
 
-        # Per-channel permissions: hidden from everyone, visible to ticket owner + staff
+        # Channel permissions — hidden from everyone except the user and staff
         staff_role = discord.utils.get(guild.roles, name=STAFF_ROLE)
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False),
-            guild.me:           discord.PermissionOverwrite(
+            guild.me: discord.PermissionOverwrite(
                 view_channel=True, send_messages=True,
                 manage_channels=True, manage_messages=True
             ),
@@ -192,42 +175,35 @@ class TicketTypeSelect(discord.ui.Select):
                 name=f"ticket-{user.id}",
                 category=category,
                 overwrites=overwrites,
-                topic=f"{info['label']} · {user.display_name} ({user.id})",
-                reason=f"Ticket opened by {user}"
+                topic=f"{info['label']} — {user.display_name}",
+                reason=f"Ticket by {user}"
             )
         except discord.Forbidden:
             await interaction.response.send_message(
-                "→ Couldn't create ticket channel — check my **Manage Channels** permission.",
+                "→ Couldn't create the channel — check my Manage Channels permission.",
                 ephemeral=True
             )
             return
 
-        # Ticket opening embed
+        # Opening message in the ticket channel
         staff_ping = staff_role.mention if staff_role else "staff"
         embed = discord.Embed(
-            title=f"◉  {info['emoji']}  {info['label']}",
+            title=f"◉  {info['label']}",
             description=(
-                f"*ticket opened*\n"
                 f"{SEP}\n"
-                f"→  Hey {user.mention}, thanks for reaching out!\n"
+                f"→  Hey {user.mention}, your ticket is open.\n"
                 f"{SEP}\n"
-                f"**→  What to do next:**\n"
                 f"{info['prompt']}\n"
                 f"{SEP}\n"
-                f"→  {staff_ping} will be with you shortly.\n"
-                f"→  Click **Close Ticket** below when your issue is resolved."
+                f"→  {staff_ping} will respond shortly.\n"
+                f"→  Press Close Ticket when you're done."
             ),
-            color=info["color"]
+            color=0xB0C0F5
         )
-        embed.set_footer(text=f"Opened by {user.display_name}  ·  {user.id}")
-        await channel.send(
-            content=user.mention,
-            embed=embed,
-            view=CloseTicketView()
-        )
+        await channel.send(content=user.mention, embed=embed, view=CloseTicketView())
 
         await interaction.response.send_message(
-            f"→ Your ticket is open: {channel.mention}", ephemeral=True
+            f"→ Ticket opened: {channel.mention}", ephemeral=True
         )
 
 
@@ -237,36 +213,29 @@ class TicketPanelView(discord.ui.View):
         self.add_item(TicketTypeSelect())
 
 
-# ── Cog ───────────────────────────────────────────────────────────────────────
-
 class Tickets(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # Register persistent views so buttons work after bot restarts
         bot.add_view(TicketPanelView())
         bot.add_view(CloseTicketView())
 
     @app_commands.command(
         name="setuptickets",
-        description="Post the support ticket panel in this channel (Admin only)"
+        description="Post the ticket panel in this channel (Admin only)"
     )
     @app_commands.checks.has_permissions(administrator=True)
     async def setuptickets(self, interaction: discord.Interaction):
         embed = discord.Embed(
             title="◉  Support",
             description=(
-                f"*Need help? We're here.*\n"
                 f"{SEP}\n"
-                f"→  **📋 Complaint** — Report a player or issue\n"
-                f"→  **❓ General Question** — Ask the staff anything\n"
-                f"→  **📝 Staff Application** — Apply to join the team\n"
-                f"{SEP}\n"
-                f"*Select an option from the dropdown below to open a ticket.\n"
-                f"Only you and staff can see your ticket.*"
+                f"→  Select an option from the dropdown below.\n"
+                f"→  Your ticket is private — only you and staff can see it.\n"
+                f"→  One ticket at a time.\n"
+                f"{SEP}"
             ),
             color=0xB0C0F5
         )
-        embed.set_footer(text="One ticket at a time  ·  Close when your issue is resolved")
         await interaction.response.send_message(embed=embed, view=TicketPanelView())
 
     @setuptickets.error
