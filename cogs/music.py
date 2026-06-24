@@ -11,6 +11,8 @@ from spotipy.oauth2 import SpotifyClientCredentials
 
 SEP = ("· " * 14).strip()
 
+# ── yt-dlp options ─────────────────────────────────────────────────────────────
+# Uses the iOS client — most reliable way to bypass YouTube bot detection in 2025
 YDL_OPTS = {
     'format': 'bestaudio/best',
     'quiet': True,
@@ -19,17 +21,28 @@ YDL_OPTS = {
     'noplaylist': True,
     'source_address': '0.0.0.0',
     'extractor_retries': 3,
-    'socket_timeout': 10,
+    'socket_timeout': 15,
+    'extractor_args': {
+        'youtube': {
+            'player_client': ['ios', 'web_embedded'],
+        }
+    },
 }
+
+# ── FFmpeg options ─────────────────────────────────────────────────────────────
+# If ffmpeg.exe is not on PATH, set FFMPEG_PATH in your .env:
+#   FFMPEG_PATH=C:\ffmpeg\bin\ffmpeg.exe
+FFMPEG_EXE = os.getenv('FFMPEG_PATH', 'ffmpeg')
 
 FFMPEG_OPTS = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
     'options': '-vn',
+    'executable': FFMPEG_EXE,
 }
 
-SPOTIFY_TRACK_RE   = re.compile(r'open\.spotify\.com/track/([A-Za-z0-9]+)')
+SPOTIFY_TRACK_RE    = re.compile(r'open\.spotify\.com/track/([A-Za-z0-9]+)')
 SPOTIFY_PLAYLIST_RE = re.compile(r'open\.spotify\.com/playlist/([A-Za-z0-9]+)')
-SPOTIFY_ALBUM_RE   = re.compile(r'open\.spotify\.com/album/([A-Za-z0-9]+)')
+SPOTIFY_ALBUM_RE    = re.compile(r'open\.spotify\.com/album/([A-Za-z0-9]+)')
 
 
 def _make_spotify() -> spotipy.Spotify | None:
@@ -37,9 +50,13 @@ def _make_spotify() -> spotipy.Spotify | None:
     csecret = os.getenv('SPOTIFY_CLIENT_SECRET')
     if not cid or not csecret:
         return None
-    return spotipy.Spotify(auth_manager=SpotifyClientCredentials(
-        client_id=cid, client_secret=csecret
-    ))
+    try:
+        return spotipy.Spotify(auth_manager=SpotifyClientCredentials(
+            client_id=cid, client_secret=csecret
+        ))
+    except Exception as e:
+        print(f"[Music] Spotify init failed: {e}")
+        return None
 
 
 class GuildMusic:
@@ -58,6 +75,7 @@ class Music(commands.Cog):
         self._ydl    = yt_dlp.YoutubeDL(YDL_OPTS)
         self._sp     = _make_spotify()
         self._states: dict[int, GuildMusic] = {}
+        print(f"[Music] Loaded. FFmpeg path: '{FFMPEG_EXE}' | Spotify: {'yes' if self._sp else 'no'}")
 
     def _state(self, gid: int) -> GuildMusic:
         if gid not in self._states:
@@ -74,19 +92,18 @@ class Music(commands.Cog):
     # ── Spotify helpers ────────────────────────────────────────────────────────
 
     def _spotify_track_query(self, track_id: str) -> str | None:
-        """Return 'Artist - Title' search string for a Spotify track ID."""
         if not self._sp:
             return None
         try:
-            t = self._sp.track(track_id)
+            t      = self._sp.track(track_id)
             artist = t['artists'][0]['name']
             title  = t['name']
             return f"{artist} - {title}"
-        except Exception:
+        except Exception as e:
+            print(f"[Music] Spotify track lookup failed: {e}")
             return None
 
     def _spotify_playlist_queries(self, playlist_id: str) -> list[str]:
-        """Return list of 'Artist - Title' strings for every track in a Spotify playlist."""
         if not self._sp:
             return []
         queries = []
@@ -97,16 +114,13 @@ class Music(commands.Cog):
                     t = item.get('track')
                     if not t:
                         continue
-                    artist = t['artists'][0]['name']
-                    title  = t['name']
-                    queries.append(f"{artist} - {title}")
+                    queries.append(f"{t['artists'][0]['name']} - {t['name']}")
                 results = self._sp.next(results) if results.get('next') else None
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[Music] Spotify playlist lookup failed: {e}")
         return queries
 
     def _spotify_album_queries(self, album_id: str) -> list[str]:
-        """Return list of 'Artist - Title' strings for every track in a Spotify album."""
         if not self._sp:
             return []
         queries = []
@@ -114,54 +128,54 @@ class Music(commands.Cog):
             results = self._sp.album_tracks(album_id, limit=50)
             while results:
                 for t in results.get('items', []):
-                    artist = t['artists'][0]['name']
-                    title  = t['name']
-                    queries.append(f"{artist} - {title}")
+                    queries.append(f"{t['artists'][0]['name']} - {t['name']}")
                 results = self._sp.next(results) if results.get('next') else None
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[Music] Spotify album lookup failed: {e}")
         return queries
 
-    def _resolve_spotify(self, query: str) -> list[str] | str | None:
-        """
-        If query is a Spotify URL, resolve it to one or more YouTube search strings.
-        Returns:
-          - list[str]  for playlists/albums (multiple tracks)
-          - str        for a single track
-          - None       if not a Spotify URL
-        """
+    def _resolve_spotify(self, query: str):
         m = SPOTIFY_TRACK_RE.search(query)
         if m:
             return self._spotify_track_query(m.group(1))
-
         m = SPOTIFY_PLAYLIST_RE.search(query)
         if m:
             return self._spotify_playlist_queries(m.group(1))
-
         m = SPOTIFY_ALBUM_RE.search(query)
         if m:
             return self._spotify_album_queries(m.group(1))
-
         return None
 
     # ── YouTube search ─────────────────────────────────────────────────────────
 
     async def _search(self, query: str) -> dict | None:
-        """Search YouTube (or fetch a URL) and return a track info dict."""
+        """Search YouTube (or fetch a URL). Returns track dict or None on failure."""
         loop = self.bot.loop
-        try:
-            info = await loop.run_in_executor(
-                None, lambda: self._ydl.extract_info(query, download=False)
-            )
-        except Exception:
-            return None
+
+        def _extract():
+            try:
+                return self._ydl.extract_info(query, download=False)
+            except yt_dlp.utils.DownloadError as e:
+                print(f"[Music] yt-dlp DownloadError for '{query}': {e}")
+                return None
+            except Exception as e:
+                print(f"[Music] yt-dlp unexpected error for '{query}': {e}")
+                return None
+
+        info = await loop.run_in_executor(None, _extract)
         if not info:
             return None
+
         entry = info['entries'][0] if 'entries' in info else info
+        stream = entry.get('url', '')
+        if not stream:
+            print(f"[Music] No stream URL returned for '{query}'")
+            return None
+
         return {
             'title':    entry.get('title', 'Unknown'),
             'url':      entry.get('webpage_url') or entry.get('url', ''),
-            'stream':   entry.get('url', ''),
+            'stream':   stream,
             'duration': entry.get('duration', 0),
             'thumb':    entry.get('thumbnail', ''),
         }
@@ -169,6 +183,8 @@ class Music(commands.Cog):
     # ── Playback internals ─────────────────────────────────────────────────────
 
     def _after_play(self, guild: discord.Guild, err):
+        if err:
+            print(f"[Music] Playback error in '{guild.name}': {err}")
         asyncio.run_coroutine_threadsafe(self._advance(guild), self.bot.loop)
 
     async def _advance(self, guild: discord.Guild):
@@ -184,19 +200,69 @@ class Music(commands.Cog):
         track = state.queue.pop(0)
         state.current = track
 
+        print(f"[Music] Advancing to: {track['title']}")
+
         # Re-fetch fresh stream URL so queued songs don't expire
-        fresh = await self._search(track['url'])
+        fresh      = await self._search(track['url'])
         stream_url = fresh['stream'] if fresh else track['stream']
+
+        if not stream_url:
+            print(f"[Music] No stream URL for '{track['title']}', skipping.")
+            if state.channel:
+                await state.channel.send(
+                    embed=discord.Embed(
+                        description=f"→  Skipped **{track['title']}** — couldn't get a stream URL.",
+                        color=0xB0C0F5
+                    )
+                )
+            await self._advance(guild)
+            return
 
         try:
             audio = discord.FFmpegPCMAudio(stream_url, **FFMPEG_OPTS)
+        except FileNotFoundError:
+            msg = (
+                f"→  FFmpeg not found at `{FFMPEG_EXE}`.\n"
+                f"→  Install FFmpeg and add it to PATH, or set `FFMPEG_PATH` in your `.env`.\n"
+                f"→  Download: https://ffmpeg.org/download.html"
+            )
+            print(f"[Music] FFmpeg not found at '{FFMPEG_EXE}'")
+            if state.channel:
+                await state.channel.send(
+                    embed=discord.Embed(description=msg, color=0xE74C3C)
+                )
+            state.current = None
+            return
+        except Exception as e:
+            print(f"[Music] FFmpegPCMAudio error: {e}")
+            if state.channel:
+                await state.channel.send(
+                    embed=discord.Embed(
+                        description=f"→  Audio error: `{e}`", color=0xE74C3C
+                    )
+                )
+            await self._advance(guild)
+            return
+
+        try:
+            source = discord.PCMVolumeTransformer(audio, volume=state.volume)
+        except Exception as e:
+            print(f"[Music] PCMVolumeTransformer failed (audioop missing?): {e} — playing at fixed volume")
+            source = audio  # fallback: play without volume control
+
+        try:
             state.voice.play(
-                discord.PCMVolumeTransformer(audio, volume=state.volume),
+                source,
                 after=lambda e: self._after_play(guild, e)
             )
         except Exception as e:
+            print(f"[Music] voice.play() error: {e}")
             if state.channel:
-                await state.channel.send(f"❌ Couldn't play **{track['title']}**: {e}")
+                await state.channel.send(
+                    embed=discord.Embed(
+                        description=f"→  Playback failed: `{e}`", color=0xE74C3C
+                    )
+                )
             await self._advance(guild)
             return
 
@@ -217,8 +283,7 @@ class Music(commands.Cog):
             await state.channel.send(embed=embed)
 
     async def _connect(self, interaction: discord.Interaction) -> discord.VoiceClient | None:
-        """Connect or move to the user's voice channel. Returns VoiceClient or None."""
-        state = self._state(interaction.guild_id)
+        state      = self._state(interaction.guild_id)
         vc_channel = interaction.user.voice.channel
 
         if state.voice and state.voice.is_connected():
@@ -229,27 +294,28 @@ class Music(commands.Cog):
         try:
             state.voice = await vc_channel.connect(timeout=10.0, reconnect=True, self_deaf=True)
             return state.voice
-        except Exception:
+        except Exception as e:
+            print(f"[Music] Voice connect error: {e}")
             await interaction.followup.send(
-                "❌ Couldn't connect to your voice channel. Try `/stop` to reset, then try again.",
+                "[x] Couldn't connect to your voice channel. Try `/stop` to reset, then try again.",
                 ephemeral=True
             )
             return None
 
     # ── /play ──────────────────────────────────────────────────────────────────
 
-    @app_commands.command(name="play", description="Play a song — supports YouTube URLs, searches, and Spotify links")
+    @app_commands.command(name="play", description="Play a song — supports YouTube, searches, and Spotify links")
     @app_commands.describe(query="Song name, YouTube URL, or Spotify track/playlist/album link")
     async def play(self, interaction: discord.Interaction, query: str):
         if not interaction.user.voice:
             await interaction.response.send_message(
-                "❌ You need to be in a voice channel first!", ephemeral=True
+                "[x] You need to be in a voice channel first!", ephemeral=True
             )
             return
 
         await interaction.response.defer()
 
-        state = self._state(interaction.guild_id)
+        state         = self._state(interaction.guild_id)
         state.channel = interaction.channel
 
         vc = await self._connect(interaction)
@@ -260,13 +326,11 @@ class Music(commands.Cog):
         spotify_result = self._resolve_spotify(query)
 
         if isinstance(spotify_result, list):
-            # Playlist or album — queue all tracks
             if not spotify_result:
-                await interaction.followup.send("❌ Couldn't find any tracks in that Spotify link.")
+                await interaction.followup.send("[x] Couldn't find any tracks in that Spotify link.")
                 return
 
-            # Search YouTube for the first track to start playing immediately
-            added = 0
+            added       = 0
             first_track = None
             for i, sq in enumerate(spotify_result):
                 track = await self._search(sq)
@@ -278,7 +342,7 @@ class Music(commands.Cog):
                 added += 1
 
             if not added:
-                await interaction.followup.send("❌ Couldn't find any of those tracks on YouTube.")
+                await interaction.followup.send("[x] Couldn't find any of those tracks on YouTube.")
                 return
 
             embed = discord.Embed(
@@ -288,7 +352,7 @@ class Music(commands.Cog):
                     f"→  Added **{added}** tracks to the queue.\n"
                     f"→  Starting with: **{first_track['title']}**"
                 ),
-                color=0x1DB954  # Spotify green
+                color=0x1DB954
             )
             await interaction.followup.send(embed=embed)
 
@@ -297,13 +361,20 @@ class Music(commands.Cog):
             return
 
         elif isinstance(spotify_result, str):
-            # Single Spotify track — resolve to YouTube search
             query = spotify_result
 
         # ── YouTube search / URL ──
         track = await self._search(query)
         if not track:
-            await interaction.followup.send("❌ Couldn't find that song. Try a different search or URL.")
+            await interaction.followup.send(
+                embed=discord.Embed(
+                    description=(
+                        f"→  Couldn't find that song.\n"
+                        f"→  Check the console for details, or try a different search."
+                    ),
+                    color=0xE74C3C
+                )
+            )
             return
 
         state.queue.append(track)
@@ -328,13 +399,60 @@ class Music(commands.Cog):
             )
             await self._advance(interaction.guild)
 
+    # ── /musictest ────────────────────────────────────────────────────────────
+
+    @app_commands.command(name="musictest", description="Diagnose music issues (Admin only)")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def musictest(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        lines = []
+
+        # FFmpeg check
+        import shutil
+        ffmpeg_found = shutil.which(FFMPEG_EXE) or (os.path.isfile(FFMPEG_EXE) if FFMPEG_EXE != 'ffmpeg' else False)
+        lines.append(f"→  FFmpeg path: `{FFMPEG_EXE}`  —  {'found' if ffmpeg_found else '**NOT FOUND**'}")
+
+        # yt-dlp search check
+        lines.append("→  Testing yt-dlp search...")
+        track = await self._search("ytsearch1:rick astley never gonna give you up")
+        if track:
+            lines.append(f"→  yt-dlp: OK  —  got `{track['title']}`")
+            lines.append(f"→  Stream URL: `{track['stream'][:60]}...`")
+        else:
+            lines.append("→  yt-dlp: **FAILED** — check console for details")
+
+        # Spotify check
+        if self._sp:
+            lines.append("→  Spotify: connected")
+        else:
+            sp_id = os.getenv('SPOTIFY_CLIENT_ID')
+            lines.append(f"→  Spotify: {'credentials found but failed to init' if sp_id else 'no credentials in .env'}")
+
+        # audioop check
+        try:
+            import audioop
+            lines.append("→  audioop: OK")
+        except ImportError:
+            try:
+                import audioop_lts  # noqa
+                lines.append("→  audioop: OK (audioop-lts)")
+            except ImportError:
+                lines.append("→  audioop: **MISSING** — volume control disabled, install audioop-lts")
+
+        embed = discord.Embed(
+            title="◉  Music Diagnostics",
+            description=f"{SEP}\n" + "\n".join(lines),
+            color=0xB0C0F5
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
     # ── /skip ─────────────────────────────────────────────────────────────────
 
     @app_commands.command(name="skip", description="Skip the current song")
     async def skip(self, interaction: discord.Interaction):
         state = self._state(interaction.guild_id)
         if not state.voice or not state.voice.is_playing():
-            await interaction.response.send_message("❌ Nothing is playing.", ephemeral=True)
+            await interaction.response.send_message("[x] Nothing is playing.", ephemeral=True)
             return
         title = state.current['title'] if state.current else "current song"
         state.voice.stop()
@@ -353,7 +471,7 @@ class Music(commands.Cog):
                 embed=discord.Embed(description="→  Paused.", color=0xB0C0F5)
             )
         else:
-            await interaction.response.send_message("❌ Nothing is playing.", ephemeral=True)
+            await interaction.response.send_message("[x] Nothing is playing.", ephemeral=True)
 
     @app_commands.command(name="resume", description="Resume the paused song")
     async def resume(self, interaction: discord.Interaction):
@@ -364,7 +482,7 @@ class Music(commands.Cog):
                 embed=discord.Embed(description="→  Resumed.", color=0xB0C0F5)
             )
         else:
-            await interaction.response.send_message("❌ Nothing is paused.", ephemeral=True)
+            await interaction.response.send_message("[x] Nothing is paused.", ephemeral=True)
 
     # ── /stop ─────────────────────────────────────────────────────────────────
 
@@ -396,9 +514,7 @@ class Music(commands.Cog):
 
         lines = []
         if state.current:
-            lines.append(
-                f"→  **Now:** {state.current['title']}  `{self._fmt(state.current['duration'])}`"
-            )
+            lines.append(f"→  **Now:** {state.current['title']}  `{self._fmt(state.current['duration'])}`")
         if state.queue:
             lines.append(SEP)
             for i, t in enumerate(state.queue[:10], 1):
@@ -420,20 +536,17 @@ class Music(commands.Cog):
     @app_commands.describe(level="Volume level from 1 to 100")
     async def volume(self, interaction: discord.Interaction, level: int):
         if not 1 <= level <= 100:
-            await interaction.response.send_message("❌ Volume must be between 1 and 100.", ephemeral=True)
+            await interaction.response.send_message("[x] Volume must be between 1 and 100.", ephemeral=True)
             return
-        state = self._state(interaction.guild_id)
+        state        = self._state(interaction.guild_id)
         state.volume = level / 100
         if state.voice and isinstance(state.voice.source, discord.PCMVolumeTransformer):
             state.voice.source.volume = state.volume
         bar_filled = int((level / 100) * 15)
-        bar = "█" * bar_filled + "░" * (15 - bar_filled)
+        bar        = "█" * bar_filled + "░" * (15 - bar_filled)
         await interaction.response.send_message(
             embed=discord.Embed(
-                description=(
-                    f"→  Volume set to **{level}%**\n"
-                    f"`{bar}`"
-                ),
+                description=f"→  Volume set to **{level}%**\n`{bar}`",
                 color=0xB0C0F5
             )
         )
@@ -442,9 +555,9 @@ class Music(commands.Cog):
 
     @app_commands.command(name="loop", description="Toggle loop mode for the current song")
     async def loop(self, interaction: discord.Interaction):
-        state = self._state(interaction.guild_id)
+        state      = self._state(interaction.guild_id)
         state.loop = not state.loop
-        status = "**on** — current song will repeat" if state.loop else "**off**"
+        status     = "**on** — current song will repeat" if state.loop else "**off**"
         await interaction.response.send_message(
             embed=discord.Embed(description=f"→  Loop is now {status}.", color=0xB0C0F5)
         )
@@ -456,7 +569,7 @@ class Music(commands.Cog):
         state = self._state(interaction.guild_id)
         if len(state.queue) < 2:
             await interaction.response.send_message(
-                "❌ Need at least 2 songs in the queue to shuffle.", ephemeral=True
+                "[x] Need at least 2 songs in the queue to shuffle.", ephemeral=True
             )
             return
         random.shuffle(state.queue)
@@ -473,9 +586,9 @@ class Music(commands.Cog):
     async def nowplaying(self, interaction: discord.Interaction):
         state = self._state(interaction.guild_id)
         if not state.current:
-            await interaction.response.send_message("❌ Nothing is playing right now.", ephemeral=True)
+            await interaction.response.send_message("[x] Nothing is playing right now.", ephemeral=True)
             return
-        t = state.current
+        t     = state.current
         embed = discord.Embed(
             title="◉  Now Playing",
             description=(
