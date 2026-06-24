@@ -284,12 +284,16 @@ class Voice(commands.Cog):
         if category is None:
             try:
                 category = await guild.fetch_channel(TEMP_VC_CATEGORY_ID)
-            except Exception:
+            except Exception as e:
+                print(f"[Voice] fetch_channel failed: {e}")
                 category = None
 
-        if category is None:
+        print(f"[Voice] createvc — category lookup: {category!r}")
+
+        if category is None or not isinstance(category, discord.CategoryChannel):
             await interaction.response.send_message(
-                f"→ Category ID `{TEMP_VC_CATEGORY_ID}` not found. Ask an admin to check the ID in `voice.py`.",
+                f"→ Category ID `{TEMP_VC_CATEGORY_ID}` not found or is not a category. "
+                f"Check that Developer Mode is on and you copied the ID from the **category**, not a channel.",
                 ephemeral=True
             )
             return
