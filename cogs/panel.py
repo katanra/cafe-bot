@@ -22,48 +22,6 @@ def _rank_label(rank: int) -> str:
     return titles.get(rank, f"#{rank}")
 
 
-# ── LFG Modal (triggered by panel button) ─────────────────────────────────────
-
-class LFGModal(discord.ui.Modal, title="Post a Looking For Group"):
-    game = discord.ui.TextInput(
-        label="Game",
-        placeholder="e.g. Apex Legends",
-        max_length=50
-    )
-    description = discord.ui.TextInput(
-        label="What are you looking for?",
-        style=discord.TextStyle.paragraph,
-        placeholder="e.g. Looking for a 3rd for ranked push",
-        max_length=300
-    )
-    slots = discord.ui.TextInput(
-        label="Slots needed (optional)",
-        placeholder="e.g. 2",
-        required=False,
-        max_length=2
-    )
-    create_vc = discord.ui.TextInput(
-        label="Create a voice channel? (yes / no)",
-        placeholder="yes",
-        required=False,
-        max_length=3
-    )
-
-    async def on_submit(self, interaction: discord.Interaction):
-        lfg_cog = interaction.client.get_cog('LFG')
-        if not lfg_cog:
-            await interaction.response.send_message("LFG system is unavailable.", ephemeral=True)
-            return
-        slots_val = 0
-        try:
-            slots_val = int(self.slots.value) if self.slots.value.strip() else 0
-        except ValueError:
-            pass
-        vc_val    = str(self.create_vc.value).strip().lower()
-        create_vc = vc_val != "no"
-        await lfg_cog.create_lfg_post(interaction, str(self.game), str(self.description), slots_val, create_vc)
-
-
 # ── Duel Modal ────────────────────────────────────────────────────────────────
 
 class DuelModal(discord.ui.Modal, title="Challenge Someone to a Duel"):
@@ -179,7 +137,11 @@ class PanelView(discord.ui.View):
     @discord.ui.button(label="Post LFG", style=discord.ButtonStyle.success,
                        custom_id="panel:lfg", row=1)
     async def post_lfg(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(LFGModal())
+        lfg_cog = interaction.client.get_cog('LFG')
+        if lfg_cog:
+            await lfg_cog.start_lfg_flow(interaction)
+        else:
+            await interaction.response.send_message("LFG system unavailable.", ephemeral=True)
 
     @discord.ui.button(label="Challenge to Duel", style=discord.ButtonStyle.danger,
                        custom_id="panel:duel", row=1)

@@ -1,5 +1,7 @@
 import os
 import re
+import shutil
+import datetime
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -11,11 +13,17 @@ from spotipy.oauth2 import SpotifyClientCredentials
 
 SEP = ("· " * 14).strip()
 
-# ── yt-dlp options ─────────────────────────────────────────────────────────────
-# NOTE: do NOT use the 'ios' player_client — it returns HLS streams with
-# different format IDs that are incompatible with 'bestaudio/best'.
+# ── yt-dlp format fallback chain ───────────────────────────────────────────────
+# The bot tries each format in order. If one fails it logs the error and retries
+# with the next. 'best' at the end is the catch-all.
+YDL_FORMAT_CHAIN = [
+    'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio/best',
+    'bestaudio/best',
+    'best',
+]
+
 YDL_OPTS = {
-    'format': 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio/best',
+    'format': YDL_FORMAT_CHAIN[0],
     'quiet': True,
     'no_warnings': True,
     'default_search': 'ytsearch',
@@ -41,6 +49,42 @@ SPOTIFY_PLAYLIST_RE = re.compile(r'open\.spotify\.com/playlist/([A-Za-z0-9]+)')
 SPOTIFY_ALBUM_RE    = re.compile(r'open\.spotify\.com/album/([A-Za-z0-9]+)')
 
 
+# ── Error log ──────────────────────────────────────────────────────────────────
+
+class MusicDiag:
+    """Circular buffer of recent music errors + auto-fix attempts."""
+    MAX = 25
+
+    def __init__(self):
+        self._log: list[dict] = []
+
+    def record(self, context: str, error: str, fixed: bool = False):
+        self._log.append({
+            'time':    datetime.datetime.now().strftime('%H:%M:%S'),
+            'context': context,
+            'error':   str(error)[:220],
+            'fixed':   fixed,
+        })
+        if len(self._log) > self.MAX:
+            self._log.pop(0)
+
+    def recent(self, n: int = 6) -> list[dict]:
+        return self._log[-n:]
+
+    def summary(self, n: int = 6) -> str:
+        entries = self.recent(n)
+        if not entries:
+            return "→  No errors recorded."
+        lines = []
+        for e in reversed(entries):
+            mark = "[+]" if e['fixed'] else "[x]"
+            lines.append(f"`{e['time']}`  {mark}  **{e['context']}** — {e['error']}")
+        return "\n".join(lines)
+
+
+_DIAG = MusicDiag()
+
+
 def _make_spotify() -> spotipy.Spotify | None:
     cid     = os.getenv('SPOTIFY_CLIENT_ID')
     csecret = os.getenv('SPOTIFY_CLIENT_SECRET')
@@ -57,12 +101,13 @@ def _make_spotify() -> spotipy.Spotify | None:
 
 class GuildMusic:
     def __init__(self):
-        self.queue:   list[dict]                      = []
-        self.current: dict | None                     = None
-        self.voice:   discord.VoiceClient | None      = None
-        self.channel: discord.abc.Messageable | None  = None
-        self.volume:  float                           = 0.5
-        self.loop:    bool                            = False
+        self.queue:      list[dict]                      = []
+        self.current:    dict | None                     = None
+        self.voice:      discord.VoiceClient | None      = None
+        self.channel:    discord.abc.Messageable | None  = None
+        self.volume:     float                           = 0.5
+        self.loop:       bool                            = False
+        self.fail_count: int                             = 0   # consecutive advance failures
 
 
 class Music(commands.Cog):
@@ -71,7 +116,55 @@ class Music(commands.Cog):
         self._ydl    = yt_dlp.YoutubeDL(YDL_OPTS)
         self._sp     = _make_spotify()
         self._states: dict[int, GuildMusic] = {}
+        self._diag   = _DIAG
         print(f"[Music] Loaded. FFmpeg path: '{FFMPEG_EXE}' | Spotify: {'yes' if self._sp else 'no'}")
+
+    async def cog_load(self):
+        """Run a silent startup self-check and log any problems."""
+        self.bot.loop.create_task(self._startup_check())
+
+    async def _startup_check(self):
+        await self.bot.wait_until_ready()
+        problems = []
+
+        # FFmpeg
+        found = shutil.which(FFMPEG_EXE) or (os.path.isfile(FFMPEG_EXE) if FFMPEG_EXE != 'ffmpeg' else False)
+        if not found:
+            problems.append(f"FFmpeg not found at '{FFMPEG_EXE}'")
+            self._diag.record("startup", f"FFmpeg not found at '{FFMPEG_EXE}'")
+
+        # Spotify
+        if not self._sp:
+            cid = os.getenv('SPOTIFY_CLIENT_ID')
+            msg = "Spotify credentials missing" if not cid else "Spotify init failed"
+            problems.append(msg)
+            self._diag.record("startup", msg)
+
+        # audioop
+        try:
+            import audioop  # noqa
+        except ImportError:
+            try:
+                import audioop_lts  # noqa
+            except ImportError:
+                problems.append("audioop missing — install audioop-lts")
+                self._diag.record("startup", "audioop missing")
+
+        # yt-dlp quick test
+        try:
+            def _test():
+                opts = {**YDL_OPTS, 'quiet': True}
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    ydl.extract_info("ytsearch1:test audio", download=False)
+            await self.bot.loop.run_in_executor(None, _test)
+        except Exception as e:
+            problems.append(f"yt-dlp self-test failed: {e}")
+            self._diag.record("startup", f"yt-dlp: {e}")
+
+        if problems:
+            print(f"[Music] Startup issues detected: {'; '.join(problems)}")
+        else:
+            print("[Music] Startup self-check passed.")
 
     def _state(self, gid: int) -> GuildMusic:
         if gid not in self._states:
@@ -145,42 +238,81 @@ class Music(commands.Cog):
     # ── YouTube search ─────────────────────────────────────────────────────────
 
     async def _search(self, query: str) -> dict | None:
-        """Search YouTube (or fetch a URL). Returns track dict or None on failure."""
+        """Search YouTube (or fetch a URL) with automatic format fallback.
+
+        Tries each format in YDL_FORMAT_CHAIN in order. If one fails with a
+        format error it logs the failure and retries the next format so the bot
+        self-heals when YouTube changes available formats.
+        """
         loop = self.bot.loop
 
-        def _extract():
-            try:
-                return self._ydl.extract_info(query, download=False)
-            except yt_dlp.utils.DownloadError as e:
-                print(f"[Music] yt-dlp DownloadError for '{query}': {e}")
+        for fmt in YDL_FORMAT_CHAIN:
+            opts = {**YDL_OPTS, 'format': fmt}
+
+            def _extract(o=opts):
+                try:
+                    with yt_dlp.YoutubeDL(o) as ydl:
+                        return ydl.extract_info(query, download=False)
+                except yt_dlp.utils.DownloadError as e:
+                    return ('download_error', str(e))
+                except Exception as e:
+                    return ('other_error', str(e))
+
+            result = await loop.run_in_executor(None, _extract)
+
+            # If yt-dlp returned an error tuple, log and try next format
+            if isinstance(result, tuple):
+                kind, msg = result
+                is_format_error = 'format' in msg.lower() or 'not available' in msg.lower()
+                self._diag.record(f"yt-dlp/{fmt[:20]}", msg,
+                                  fixed=is_format_error and fmt != YDL_FORMAT_CHAIN[-1])
+                print(f"[Music] yt-dlp error (format={fmt!r}) for '{query}': {msg}")
+                if is_format_error:
+                    print(f"[Music] Format error — retrying with next format in chain")
+                    continue
+                return None  # non-format errors won't be fixed by a different format
+
+            if not result:
+                self._diag.record("yt-dlp/no-result", f"No result for '{query}'")
                 return None
-            except Exception as e:
-                print(f"[Music] yt-dlp unexpected error for '{query}': {e}")
-                return None
 
-        info = await loop.run_in_executor(None, _extract)
-        if not info:
-            return None
+            entry = result['entries'][0] if 'entries' in result else result
+            stream = entry.get('url', '')
+            if not stream:
+                self._diag.record("yt-dlp/no-stream", f"No stream URL for '{query}'")
+                print(f"[Music] No stream URL returned for '{query}'")
+                continue  # try next format
 
-        entry = info['entries'][0] if 'entries' in info else info
-        stream = entry.get('url', '')
-        if not stream:
-            print(f"[Music] No stream URL returned for '{query}'")
-            return None
+            return {
+                'title':    entry.get('title', 'Unknown'),
+                'url':      entry.get('webpage_url') or entry.get('url', ''),
+                'stream':   stream,
+                'duration': entry.get('duration', 0),
+                'thumb':    entry.get('thumbnail', ''),
+            }
 
-        return {
-            'title':    entry.get('title', 'Unknown'),
-            'url':      entry.get('webpage_url') or entry.get('url', ''),
-            'stream':   stream,
-            'duration': entry.get('duration', 0),
-            'thumb':    entry.get('thumbnail', ''),
-        }
+        # All formats exhausted
+        self._diag.record("yt-dlp/all-formats-failed", f"'{query}'")
+        print(f"[Music] All formats exhausted for '{query}'")
+        return None
 
     # ── Playback internals ─────────────────────────────────────────────────────
 
     def _after_play(self, guild: discord.Guild, err):
         if err:
             print(f"[Music] Playback error in '{guild.name}': {err}")
+            self._diag.record(f"playback/{guild.name}", str(err))
+            state = self._state(guild.id)
+            if state.channel:
+                asyncio.run_coroutine_threadsafe(
+                    state.channel.send(
+                        embed=discord.Embed(
+                            description=f"→  Playback stopped with an error: `{str(err)[:120]}`",
+                            color=0xE74C3C
+                        )
+                    ),
+                    self.bot.loop
+                )
         asyncio.run_coroutine_threadsafe(self._advance(guild), self.bot.loop)
 
     async def _advance(self, guild: discord.Guild):
@@ -189,8 +321,41 @@ class Music(commands.Cog):
         if state.loop and state.current:
             state.queue.insert(0, state.current)
 
-        if not state.queue or not state.voice or not state.voice.is_connected():
+        if not state.queue:
             state.current = None
+            state.fail_count = 0
+            return
+
+        # ── Hard stop if too many consecutive failures (prevents reconnect loops) ──
+        if state.fail_count >= 3:
+            state.current    = None
+            state.fail_count = 0
+            state.queue.clear()
+            self._diag.record("advance/loop-break", "Stopped after 3 consecutive failures")
+            if state.channel:
+                await state.channel.send(
+                    embed=discord.Embed(
+                        description=(
+                            "→  Music stopped after 3 failed attempts.\n"
+                            "→  Run `/musicfix` to diagnose, then `/play` to try again."
+                        ),
+                        color=0xE74C3C
+                    )
+                )
+            return
+
+        # ── Voice check — stop cleanly instead of reconnect-looping ──
+        if state.voice is None or not state.voice.is_connected():
+            state.current    = None
+            state.fail_count = 0
+            self._diag.record("voice/disconnected", "Queue stopped — voice client lost")
+            if state.channel:
+                await state.channel.send(
+                    embed=discord.Embed(
+                        description="→  Disconnected from voice. Join a VC and use `/play` to resume.",
+                        color=0xB0C0F5
+                    )
+                )
             return
 
         track = state.queue.pop(0)
@@ -198,17 +363,35 @@ class Music(commands.Cog):
 
         print(f"[Music] Advancing to: {track['title']}")
 
-        # Re-fetch fresh stream URL so queued songs don't expire
-        fresh      = await self._search(track['url'])
-        stream_url = fresh['stream'] if fresh else track['stream']
-
-        if not stream_url:
-            print(f"[Music] No stream URL for '{track['title']}', skipping.")
+        # Re-fetch a fresh stream URL — don't fall back to the stale original
+        fresh = await self._search(track['url'])
+        if not fresh:
+            # Search completely failed — tell the user specifically what went wrong
+            state.fail_count += 1
+            self._diag.record("advance/search-failed", track['title'])
+            print(f"[Music] Search failed for '{track['title']}' (fail #{state.fail_count})")
             if state.channel:
                 await state.channel.send(
                     embed=discord.Embed(
-                        description=f"→  Skipped **{track['title']}** — couldn't get a stream URL.",
-                        color=0xB0C0F5
+                        description=(
+                            f"→  Couldn't get audio for **{track['title']}**.\n"
+                            f"→  YouTube may be blocking requests — check console or run `/musicfix`."
+                        ),
+                        color=0xE74C3C
+                    )
+                )
+            await self._advance(guild)
+            return
+
+        stream_url = fresh['stream']
+        if not stream_url:
+            state.fail_count += 1
+            self._diag.record("advance/no-stream", track['title'])
+            if state.channel:
+                await state.channel.send(
+                    embed=discord.Embed(
+                        description=f"→  No stream URL for **{track['title']}** — skipping.",
+                        color=0xE74C3C
                     )
                 )
             await self._advance(guild)
@@ -223,19 +406,20 @@ class Music(commands.Cog):
                 f"→  Download: https://ffmpeg.org/download.html"
             )
             print(f"[Music] FFmpeg not found at '{FFMPEG_EXE}'")
+            self._diag.record("ffmpeg/not-found", f"Not found at '{FFMPEG_EXE}'")
+            state.fail_count += 1
             if state.channel:
-                await state.channel.send(
-                    embed=discord.Embed(description=msg, color=0xE74C3C)
-                )
+                await state.channel.send(embed=discord.Embed(description=msg, color=0xE74C3C))
             state.current = None
+            state.queue.clear()   # no point queuing more if FFmpeg is missing
             return
         except Exception as e:
             print(f"[Music] FFmpegPCMAudio error: {e}")
+            self._diag.record("ffmpeg/audio-error", str(e))
+            state.fail_count += 1
             if state.channel:
                 await state.channel.send(
-                    embed=discord.Embed(
-                        description=f"→  Audio error: `{e}`", color=0xE74C3C
-                    )
+                    embed=discord.Embed(description=f"→  Audio init error: `{e}`", color=0xE74C3C)
                 )
             await self._advance(guild)
             return
@@ -253,14 +437,18 @@ class Music(commands.Cog):
             )
         except Exception as e:
             print(f"[Music] voice.play() error: {e}")
+            self._diag.record("voice/play-error", str(e))
+            state.fail_count += 1
             if state.channel:
                 await state.channel.send(
-                    embed=discord.Embed(
-                        description=f"→  Playback failed: `{e}`", color=0xE74C3C
-                    )
+                    embed=discord.Embed(description=f"→  Playback failed: `{e}`", color=0xE74C3C)
                 )
             await self._advance(guild)
             return
+
+        # ── Success — reset failure counter and announce ──
+        state.fail_count = 0
+        print(f"[Music] Playing: {track['title']}")
 
         if state.channel:
             embed = discord.Embed(
@@ -409,7 +597,6 @@ class Music(commands.Cog):
         lines = []
 
         # FFmpeg check
-        import shutil
         ffmpeg_found = shutil.which(FFMPEG_EXE) or (os.path.isfile(FFMPEG_EXE) if FFMPEG_EXE != 'ffmpeg' else False)
         lines.append(f"→  FFmpeg path: `{FFMPEG_EXE}`  —  {'found' if ffmpeg_found else '**NOT FOUND**'}")
 
@@ -445,6 +632,128 @@ class Music(commands.Cog):
             description=f"{SEP}\n" + "\n".join(lines),
             color=0xB0C0F5
         )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    # ── /musicfix ─────────────────────────────────────────────────────────────
+
+    @app_commands.command(
+        name="musicfix",
+        description="Auto-diagnose and fix music problems, and show recent error log (Admin only)"
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def musicfix(self, interaction: discord.Interaction):
+        """Actively attempts to fix problems, not just report them."""
+        await interaction.response.defer(ephemeral=True)
+        fixes   = []   # things fixed
+        issues  = []   # things broken with no auto-fix
+        info    = []   # neutral status lines
+
+        # ── 1. FFmpeg ──
+        ffmpeg_found = shutil.which(FFMPEG_EXE) or (
+            os.path.isfile(FFMPEG_EXE) if FFMPEG_EXE != 'ffmpeg' else False
+        )
+        if ffmpeg_found:
+            info.append(f"→  FFmpeg: found at `{FFMPEG_EXE}`")
+        else:
+            issues.append(
+                f"→  FFmpeg **not found** at `{FFMPEG_EXE}`\n"
+                f"     Install it and add to PATH, or set `FFMPEG_PATH` in `.env`.\n"
+                f"     Download: https://ffmpeg.org/download.html"
+            )
+
+        # ── 2. Spotify ──
+        if self._sp:
+            info.append("→  Spotify: connected")
+        else:
+            # Attempt a re-init with current env
+            new_sp = _make_spotify()
+            if new_sp:
+                self._sp = new_sp
+                fixes.append("→  Spotify: re-initialised successfully [+]")
+                self._diag.record("spotify/reinit", "Re-init succeeded", fixed=True)
+            else:
+                sp_id = os.getenv('SPOTIFY_CLIENT_ID')
+                issues.append(
+                    f"→  Spotify: {'no credentials in .env' if not sp_id else 'credentials present but init failed'}"
+                )
+
+        # ── 3. audioop ──
+        try:
+            import audioop  # noqa
+            info.append("→  audioop: OK")
+        except ImportError:
+            try:
+                import audioop_lts  # noqa
+                info.append("→  audioop: OK (audioop-lts)")
+            except ImportError:
+                issues.append("→  audioop: **missing** — run `pip install audioop-lts`")
+
+        # ── 4. Stale voice clients ──
+        stale_count = 0
+        for gid, state in self._states.items():
+            if state.voice and not state.voice.is_connected():
+                try:
+                    await state.voice.disconnect(force=True)
+                except Exception:
+                    pass
+                state.voice   = None
+                state.current = None
+                stale_count  += 1
+                self._diag.record("voice/stale-cleared", f"guild {gid}", fixed=True)
+        if stale_count:
+            fixes.append(f"→  Cleared {stale_count} stale voice connection(s) [+]")
+        else:
+            info.append("→  Voice clients: all clean")
+
+        # ── 5. yt-dlp format probe ──
+        info.append("→  Testing yt-dlp formats...")
+        working_fmt = None
+        for fmt in YDL_FORMAT_CHAIN:
+            opts = {**YDL_OPTS, 'format': fmt, 'quiet': True}
+            def _probe(o=opts):
+                try:
+                    with yt_dlp.YoutubeDL(o) as ydl:
+                        r = ydl.extract_info("ytsearch1:audio test", download=False)
+                        entry = r['entries'][0] if 'entries' in r else r
+                        return entry.get('url', '')
+                except Exception as e:
+                    return None
+            url = await self.bot.loop.run_in_executor(None, _probe)
+            if url:
+                working_fmt = fmt
+                break
+
+        if working_fmt:
+            if working_fmt != YDL_FORMAT_CHAIN[0]:
+                # Update the live ydl instance to use the best working format
+                YDL_OPTS['format'] = working_fmt
+                self._ydl = yt_dlp.YoutubeDL(YDL_OPTS)
+                fixes.append(f"→  yt-dlp format updated to `{working_fmt}` [+]")
+                self._diag.record("yt-dlp/format-updated", working_fmt, fixed=True)
+            else:
+                info.append(f"→  yt-dlp: OK (format `{working_fmt}`)")
+        else:
+            issues.append("→  yt-dlp: **all formats failed** — YouTube may be blocking requests")
+
+        # ── Build embed ──
+        sections = []
+        if fixes:
+            sections.append("**Fixed automatically:**\n" + "\n".join(fixes))
+        if issues:
+            sections.append("**Needs attention:**\n" + "\n".join(issues))
+        if info:
+            sections.append("**Status:**\n" + "\n".join(info))
+
+        # Recent error log
+        log_str = self._diag.summary(6)
+        sections.append(f"**Recent error log:**\n{log_str}")
+
+        embed = discord.Embed(
+            title="◉  Music Auto-Fix",
+            description=f"{SEP}\n" + f"\n{SEP}\n".join(sections),
+            color=0x2ECC71 if not issues else 0xE67E22
+        )
+        embed.set_footer(text="Run /musictest for a simpler read-only check")
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     # ── /skip ─────────────────────────────────────────────────────────────────
