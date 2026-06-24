@@ -281,6 +281,18 @@ class Voice(commands.Cog):
 
         guild    = interaction.guild
         category = guild.get_channel(TEMP_VC_CATEGORY_ID)
+        if category is None:
+            try:
+                category = await guild.fetch_channel(TEMP_VC_CATEGORY_ID)
+            except Exception:
+                category = None
+
+        if category is None:
+            await interaction.response.send_message(
+                f"→ Category ID `{TEMP_VC_CATEGORY_ID}` not found. Ask an admin to check the ID in `voice.py`.",
+                ephemeral=True
+            )
+            return
 
         try:
             channel = await guild.create_voice_channel(

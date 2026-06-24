@@ -12,9 +12,10 @@ from spotipy.oauth2 import SpotifyClientCredentials
 SEP = ("· " * 14).strip()
 
 # ── yt-dlp options ─────────────────────────────────────────────────────────────
-# Uses the iOS client — most reliable way to bypass YouTube bot detection in 2025
+# NOTE: do NOT use the 'ios' player_client — it returns HLS streams with
+# different format IDs that are incompatible with 'bestaudio/best'.
 YDL_OPTS = {
-    'format': 'bestaudio/best',
+    'format': 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio/best',
     'quiet': True,
     'no_warnings': True,
     'default_search': 'ytsearch',
@@ -22,11 +23,6 @@ YDL_OPTS = {
     'source_address': '0.0.0.0',
     'extractor_retries': 3,
     'socket_timeout': 15,
-    'extractor_args': {
-        'youtube': {
-            'player_client': ['ios', 'web_embedded'],
-        }
-    },
 }
 
 # ── FFmpeg options ─────────────────────────────────────────────────────────────
@@ -286,10 +282,15 @@ class Music(commands.Cog):
         state      = self._state(interaction.guild_id)
         vc_channel = interaction.user.voice.channel
 
-        if state.voice and state.voice.is_connected():
-            if state.voice.channel != vc_channel:
-                await state.voice.move_to(vc_channel)
-            return state.voice
+        # Clean up stale/disconnected voice client (handles 4006 session errors)
+        if state.voice:
+            if state.voice.is_connected() and state.voice.channel == vc_channel:
+                return state.voice
+            try:
+                await state.voice.disconnect(force=True)
+            except Exception:
+                pass
+            state.voice = None
 
         try:
             state.voice = await vc_channel.connect(timeout=10.0, reconnect=True, self_deaf=True)
