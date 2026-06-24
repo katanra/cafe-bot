@@ -4,3 +4,4 @@ audioop-lts
 yt-dlp
 PyNaCl
 aiohttp
+spotipy

@@ -1,9 +1,13 @@
+import os
+import re
 import discord
 from discord import app_commands
 from discord.ext import commands
 import yt_dlp
 import asyncio
 import random
+import spotipy
+from spotipy.oauth2 import SpotifyClientCredentials
 
 SEP = ("· " * 14).strip()
 
@@ -14,12 +18,28 @@ YDL_OPTS = {
     'default_search': 'ytsearch',
     'noplaylist': True,
     'source_address': '0.0.0.0',
+    'extractor_retries': 3,
+    'socket_timeout': 10,
 }
 
 FFMPEG_OPTS = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
     'options': '-vn',
 }
+
+SPOTIFY_TRACK_RE   = re.compile(r'open\.spotify\.com/track/([A-Za-z0-9]+)')
+SPOTIFY_PLAYLIST_RE = re.compile(r'open\.spotify\.com/playlist/([A-Za-z0-9]+)')
+SPOTIFY_ALBUM_RE   = re.compile(r'open\.spotify\.com/album/([A-Za-z0-9]+)')
+
+
+def _make_spotify() -> spotipy.Spotify | None:
+    cid     = os.getenv('SPOTIFY_CLIENT_ID')
+    csecret = os.getenv('SPOTIFY_CLIENT_SECRET')
+    if not cid or not csecret:
+        return None
+    return spotipy.Spotify(auth_manager=SpotifyClientCredentials(
+        client_id=cid, client_secret=csecret
+    ))
 
 
 class GuildMusic:
@@ -34,8 +54,9 @@ class GuildMusic:
 
 class Music(commands.Cog):
     def __init__(self, bot):
-        self.bot    = bot
-        self._ydl   = yt_dlp.YoutubeDL(YDL_OPTS)
+        self.bot     = bot
+        self._ydl    = yt_dlp.YoutubeDL(YDL_OPTS)
+        self._sp     = _make_spotify()
         self._states: dict[int, GuildMusic] = {}
 
     def _state(self, gid: int) -> GuildMusic:
@@ -50,8 +71,83 @@ class Music(commands.Cog):
         h, m = divmod(m, 60)
         return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
+    # ── Spotify helpers ────────────────────────────────────────────────────────
+
+    def _spotify_track_query(self, track_id: str) -> str | None:
+        """Return 'Artist - Title' search string for a Spotify track ID."""
+        if not self._sp:
+            return None
+        try:
+            t = self._sp.track(track_id)
+            artist = t['artists'][0]['name']
+            title  = t['name']
+            return f"{artist} - {title}"
+        except Exception:
+            return None
+
+    def _spotify_playlist_queries(self, playlist_id: str) -> list[str]:
+        """Return list of 'Artist - Title' strings for every track in a Spotify playlist."""
+        if not self._sp:
+            return []
+        queries = []
+        try:
+            results = self._sp.playlist_tracks(playlist_id, limit=50)
+            while results:
+                for item in results.get('items', []):
+                    t = item.get('track')
+                    if not t:
+                        continue
+                    artist = t['artists'][0]['name']
+                    title  = t['name']
+                    queries.append(f"{artist} - {title}")
+                results = self._sp.next(results) if results.get('next') else None
+        except Exception:
+            pass
+        return queries
+
+    def _spotify_album_queries(self, album_id: str) -> list[str]:
+        """Return list of 'Artist - Title' strings for every track in a Spotify album."""
+        if not self._sp:
+            return []
+        queries = []
+        try:
+            results = self._sp.album_tracks(album_id, limit=50)
+            while results:
+                for t in results.get('items', []):
+                    artist = t['artists'][0]['name']
+                    title  = t['name']
+                    queries.append(f"{artist} - {title}")
+                results = self._sp.next(results) if results.get('next') else None
+        except Exception:
+            pass
+        return queries
+
+    def _resolve_spotify(self, query: str) -> list[str] | str | None:
+        """
+        If query is a Spotify URL, resolve it to one or more YouTube search strings.
+        Returns:
+          - list[str]  for playlists/albums (multiple tracks)
+          - str        for a single track
+          - None       if not a Spotify URL
+        """
+        m = SPOTIFY_TRACK_RE.search(query)
+        if m:
+            return self._spotify_track_query(m.group(1))
+
+        m = SPOTIFY_PLAYLIST_RE.search(query)
+        if m:
+            return self._spotify_playlist_queries(m.group(1))
+
+        m = SPOTIFY_ALBUM_RE.search(query)
+        if m:
+            return self._spotify_album_queries(m.group(1))
+
+        return None
+
+    # ── YouTube search ─────────────────────────────────────────────────────────
+
     async def _search(self, query: str) -> dict | None:
-        """Search YouTube and return track info dict."""
+        """Search YouTube (or fetch a URL) and return a track info dict."""
         loop = self.bot.loop
         try:
             info = await loop.run_in_executor(
@@ -70,15 +166,14 @@ class Music(commands.Cog):
             'thumb':    entry.get('thumbnail', ''),
         }
 
+    # ── Playback internals ─────────────────────────────────────────────────────
+
     def _after_play(self, guild: discord.Guild, err):
-        """Called by discord.py after a song finishes. Schedules next track."""
         asyncio.run_coroutine_threadsafe(self._advance(guild), self.bot.loop)
 
     async def _advance(self, guild: discord.Guild):
-        """Pop next track from queue and start playing it."""
         state = self._state(guild.id)
 
-        # Loop: re-queue the finished song before advancing
         if state.loop and state.current:
             state.queue.insert(0, state.current)
 
@@ -121,10 +216,30 @@ class Music(commands.Cog):
                 embed.set_thumbnail(url=track['thumb'])
             await state.channel.send(embed=embed)
 
+    async def _connect(self, interaction: discord.Interaction) -> discord.VoiceClient | None:
+        """Connect or move to the user's voice channel. Returns VoiceClient or None."""
+        state = self._state(interaction.guild_id)
+        vc_channel = interaction.user.voice.channel
+
+        if state.voice and state.voice.is_connected():
+            if state.voice.channel != vc_channel:
+                await state.voice.move_to(vc_channel)
+            return state.voice
+
+        try:
+            state.voice = await vc_channel.connect(timeout=10.0, reconnect=True, self_deaf=True)
+            return state.voice
+        except Exception:
+            await interaction.followup.send(
+                "❌ Couldn't connect to your voice channel. Try `/stop` to reset, then try again.",
+                ephemeral=True
+            )
+            return None
+
     # ── /play ──────────────────────────────────────────────────────────────────
 
-    @app_commands.command(name="play", description="Play a song in your voice channel")
-    @app_commands.describe(query="Song name or YouTube URL")
+    @app_commands.command(name="play", description="Play a song — supports YouTube URLs, searches, and Spotify links")
+    @app_commands.describe(query="Song name, YouTube URL, or Spotify track/playlist/album link")
     async def play(self, interaction: discord.Interaction, query: str):
         if not interaction.user.voice:
             await interaction.response.send_message(
@@ -137,21 +252,55 @@ class Music(commands.Cog):
         state = self._state(interaction.guild_id)
         state.channel = interaction.channel
 
-        # Connect or move to user's voice channel
-        vc_channel = interaction.user.voice.channel
-        if state.voice and state.voice.is_connected():
-            if state.voice.channel != vc_channel:
-                await state.voice.move_to(vc_channel)
-        else:
-            try:
-                state.voice = await vc_channel.connect(timeout=10.0, reconnect=False, self_deaf=True)
-            except Exception as e:
-                await interaction.followup.send(
-                    "❌ Couldn't connect to your voice channel. Try using `/stop` first to reset, then try again.",
-                    ephemeral=True
-                )
+        vc = await self._connect(interaction)
+        if not vc:
+            return
+
+        # ── Spotify resolution ──
+        spotify_result = self._resolve_spotify(query)
+
+        if isinstance(spotify_result, list):
+            # Playlist or album — queue all tracks
+            if not spotify_result:
+                await interaction.followup.send("❌ Couldn't find any tracks in that Spotify link.")
                 return
 
+            # Search YouTube for the first track to start playing immediately
+            added = 0
+            first_track = None
+            for i, sq in enumerate(spotify_result):
+                track = await self._search(sq)
+                if not track:
+                    continue
+                state.queue.append(track)
+                if i == 0:
+                    first_track = track
+                added += 1
+
+            if not added:
+                await interaction.followup.send("❌ Couldn't find any of those tracks on YouTube.")
+                return
+
+            embed = discord.Embed(
+                title="◉  Spotify Playlist Queued",
+                description=(
+                    f"{SEP}\n"
+                    f"→  Added **{added}** tracks to the queue.\n"
+                    f"→  Starting with: **{first_track['title']}**"
+                ),
+                color=0x1DB954  # Spotify green
+            )
+            await interaction.followup.send(embed=embed)
+
+            if not vc.is_playing() and not vc.is_paused():
+                await self._advance(interaction.guild)
+            return
+
+        elif isinstance(spotify_result, str):
+            # Single Spotify track — resolve to YouTube search
+            query = spotify_result
+
+        # ── YouTube search / URL ──
         track = await self._search(query)
         if not track:
             await interaction.followup.send("❌ Couldn't find that song. Try a different search or URL.")
@@ -159,8 +308,7 @@ class Music(commands.Cog):
 
         state.queue.append(track)
 
-        if state.voice.is_playing() or state.voice.is_paused():
-            # Already playing — add to queue
+        if vc.is_playing() or vc.is_paused():
             embed = discord.Embed(
                 title="◉  Added to Queue",
                 description=(
@@ -175,7 +323,6 @@ class Music(commands.Cog):
                 embed.set_thumbnail(url=track['thumb'])
             await interaction.followup.send(embed=embed)
         else:
-            # Nothing playing — start immediately
             await interaction.followup.send(
                 embed=discord.Embed(description="→  Loading...", color=0xB0C0F5)
             )
@@ -190,12 +337,9 @@ class Music(commands.Cog):
             await interaction.response.send_message("❌ Nothing is playing.", ephemeral=True)
             return
         title = state.current['title'] if state.current else "current song"
-        state.voice.stop()  # triggers _after_play → _advance automatically
+        state.voice.stop()
         await interaction.response.send_message(
-            embed=discord.Embed(
-                description=f"→  Skipped **{title}**.",
-                color=0xB0C0F5
-            )
+            embed=discord.Embed(description=f"→  Skipped **{title}**.", color=0xB0C0F5)
         )
 
     # ── /pause & /resume ──────────────────────────────────────────────────────
@@ -302,10 +446,7 @@ class Music(commands.Cog):
         state.loop = not state.loop
         status = "**on** — current song will repeat" if state.loop else "**off**"
         await interaction.response.send_message(
-            embed=discord.Embed(
-                description=f"→  Loop is now {status}.",
-                color=0xB0C0F5
-            )
+            embed=discord.Embed(description=f"→  Loop is now {status}.", color=0xB0C0F5)
         )
 
     # ── /shuffle ──────────────────────────────────────────────────────────────
@@ -314,7 +455,9 @@ class Music(commands.Cog):
     async def shuffle(self, interaction: discord.Interaction):
         state = self._state(interaction.guild_id)
         if len(state.queue) < 2:
-            await interaction.response.send_message("❌ Need at least 2 songs in the queue to shuffle.", ephemeral=True)
+            await interaction.response.send_message(
+                "❌ Need at least 2 songs in the queue to shuffle.", ephemeral=True
+            )
             return
         random.shuffle(state.queue)
         await interaction.response.send_message(
