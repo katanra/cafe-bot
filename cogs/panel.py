@@ -42,6 +42,12 @@ class LFGModal(discord.ui.Modal, title="Post a Looking For Group"):
         required=False,
         max_length=2
     )
+    create_vc = discord.ui.TextInput(
+        label="Create a voice channel? (yes / no)",
+        placeholder="yes",
+        required=False,
+        max_length=3
+    )
 
     async def on_submit(self, interaction: discord.Interaction):
         lfg_cog = interaction.client.get_cog('LFG')
@@ -53,7 +59,9 @@ class LFGModal(discord.ui.Modal, title="Post a Looking For Group"):
             slots_val = int(self.slots.value) if self.slots.value.strip() else 0
         except ValueError:
             pass
-        await lfg_cog.create_lfg_post(interaction, str(self.game), str(self.description), slots_val)
+        vc_val    = str(self.create_vc.value).strip().lower()
+        create_vc = vc_val != "no"
+        await lfg_cog.create_lfg_post(interaction, str(self.game), str(self.description), slots_val, create_vc)
 
 
 # ── Duel Modal ────────────────────────────────────────────────────────────────

@@ -4,7 +4,10 @@ from discord.ext import commands
 
 SEP = ("· " * 14).strip()
 
-LFG_VC_CATEGORY = "LFG"   # bot looks for this category first; falls back to no category
+# Same category as /createvc
+LFG_VC_CATEGORY_ID = 1515950863422586950
+
+RANKED_MODES = {"Ranked BR"}
 
 # ── Apex rank options ──────────────────────────────────────────────────────────
 
@@ -35,7 +38,7 @@ APEX_MODE_OPTIONS = [
 ]
 
 
-# ── Select menus ──────────────────────────────────────────────────────────────
+# ── Select components ──────────────────────────────────────────────────────────
 
 class ApexRankSelect(discord.ui.Select):
     def __init__(self):
@@ -62,17 +65,41 @@ class ApexModeSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         mode = self.values[0]
-        await interaction.response.send_message(
+
+        # Rebuild the view: always keep mode select,
+        # add rank select only if a ranked mode was chosen
+        new_view = discord.ui.View(timeout=None)
+        new_view.add_item(ApexModeSelect())
+        if mode in RANKED_MODES:
+            new_view.add_item(ApexRankSelect())
+
+        # Update the LFG post's dropdowns in place
+        await interaction.response.edit_message(view=new_view)
+        await interaction.followup.send(
             f"→ {interaction.user.mention} is looking for **{mode}**"
         )
 
 
 class LFGView(discord.ui.View):
+    """View attached to an Apex LFG post. Shows mode select; rank select appears after ranked is chosen."""
     def __init__(self, is_apex: bool = False):
         super().__init__(timeout=None)
-        self.add_item(ApexRankSelect())
         if is_apex:
             self.add_item(ApexModeSelect())
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+async def _get_vc_category(guild: discord.Guild) -> discord.CategoryChannel | None:
+    category = guild.get_channel(LFG_VC_CATEGORY_ID)
+    if category is None:
+        try:
+            category = await guild.fetch_channel(LFG_VC_CATEGORY_ID)
+        except Exception as e:
+            print(f"[LFG] fetch_channel failed: {e}")
+    if not isinstance(category, discord.CategoryChannel):
+        return None
+    return category
 
 
 # ── Cog ───────────────────────────────────────────────────────────────────────
@@ -80,51 +107,49 @@ class LFGView(discord.ui.View):
 class LFG(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.lfg_posts: dict[int, int]        = {}  # {message_id: poster_id}
+        self.lfg_posts: dict[int, int]            = {}  # {message_id: poster_id}
         self.origins:   dict[int, dict[int, int]] = {}  # {message_id: {user_id: channel_id}}
-        self.lfg_vcs:   dict[int, int]        = {}  # {vc_id: message_id}
+        self.lfg_vcs:   dict[int, int]            = {}  # {vc_id: message_id}
 
-    # ── Core posting logic (used by /lfg command AND panel modal) ─────────────
+    # ── Core posting logic ─────────────────────────────────────────────────────
 
     async def create_lfg_post(
         self,
         interaction: discord.Interaction,
         game: str,
         description: str,
-        slots: int = 0
+        slots: int = 0,
+        create_vc: bool = True,
     ):
-        guild    = interaction.guild
-        is_apex  = "apex" in game.lower()
+        guild   = interaction.guild
+        is_apex = "apex" in game.lower()
 
-        # ── Create voice channel ───────────────────────────────────────────────
+        # ── Optionally create voice channel ───────────────────────────────────
         vc = None
-        try:
-            # Find or skip the LFG category
-            category = discord.utils.get(guild.categories, name=LFG_VC_CATEGORY)
-
-            # Make it explicitly visible to everyone
-            overwrites = {
-                guild.default_role: discord.PermissionOverwrite(
-                    view_channel=True,
-                    connect=True,
-                    speak=True
+        if create_vc:
+            try:
+                category   = await _get_vc_category(guild)
+                overwrites = {
+                    guild.default_role: discord.PermissionOverwrite(
+                        view_channel=True, connect=True, speak=True
+                    )
+                }
+                vc = await guild.create_voice_channel(
+                    name=f"[ {game[:40]} ]",
+                    category=category,
+                    overwrites=overwrites,
+                    reason=f"LFG by {interaction.user}"
                 )
-            }
-            vc = await guild.create_voice_channel(
-                name=f"[ {game[:40]} ]",
-                category=category,
-                overwrites=overwrites,
-                reason=f"LFG by {interaction.user}"
-            )
-        except discord.Forbidden:
-            vc = None
-        except Exception:
-            vc = None
+            except discord.Forbidden:
+                vc = None
+            except Exception as e:
+                print(f"[LFG] VC creation error: {e}")
+                vc = None
 
-        # ── Build embed ────────────────────────────────────────────────────────
-        slot_line = f"\n→  **Slots needed:** {slots}" if slots > 0 else ""
-        vc_line   = f"\n→  Voice channel: {vc.mention}" if vc else ""
-        mode_hint = "\n→  Use the **game mode** dropdown to show what you're queuing." if is_apex else ""
+        # ── Build embed ───────────────────────────────────────────────────────
+        slot_line  = f"\n→  **Slots needed:** {slots}" if slots > 0 else ""
+        vc_line    = f"\n→  Voice channel: {vc.mention}" if vc else ""
+        mode_hint  = "\n→  Use the **game mode** dropdown to show what you're queuing." if is_apex else ""
 
         embed = discord.Embed(
             title="◉  Looking For Group",
@@ -141,12 +166,13 @@ class LFG(commands.Cog):
             color=0xB0C0F5
         )
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
-        footer = "React [+] to join host's VC  ·  Remove to go back  ·  Set your rank below"
+
+        footer = "React [+] to join host's VC  ·  Remove to go back"
         if is_apex:
-            footer += "  ·  Pick a game mode"
+            footer += "  ·  Pick a game mode below"
         embed.set_footer(text=footer)
 
-        view = LFGView(is_apex=is_apex)
+        view          = LFGView(is_apex=is_apex)
         lfg_ping_role = discord.utils.get(guild.roles, name="LFG Ping")
         await interaction.response.send_message(
             content=lfg_ping_role.mention if lfg_ping_role else None,
@@ -175,16 +201,18 @@ class LFG(commands.Cog):
     @app_commands.describe(
         game="The game you're looking to play",
         description="What you're looking for",
-        slots="How many extra players you need (optional)"
+        slots="How many extra players you need (optional)",
+        create_vc="Create a voice channel for your group? Default: yes"
     )
     async def lfg(
         self,
         interaction: discord.Interaction,
         game: str,
         description: str,
-        slots: int = 0
+        slots: int = 0,
+        create_vc: bool = True,
     ):
-        await self.create_lfg_post(interaction, game, description, slots)
+        await self.create_lfg_post(interaction, game, description, slots, create_vc)
 
     # ── Auto-delete VC when it empties ────────────────────────────────────────
 
