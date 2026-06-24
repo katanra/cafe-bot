@@ -222,6 +222,10 @@ class Duels(commands.Cog):
     @app_commands.command(name="duel", description="Challenge someone to a duel for gold!")
     @app_commands.describe(opponent="The server member you want to challenge")
     async def duel(self, interaction: discord.Interaction, opponent: discord.Member):
+        if not interaction.guild:
+            await interaction.response.send_message("→ This command only works in a server.", ephemeral=True)
+            return
+
         challenger = interaction.user
 
         if opponent.id == challenger.id:
@@ -280,6 +284,21 @@ class Duels(commands.Cog):
         await interaction.response.send_message(content=content, embed=embed, view=view)
         # Store message ref so on_timeout can edit it
         view.message = await interaction.original_response()
+
+    @duel.error
+    async def duel_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        import traceback
+        original = getattr(error, 'original', error)
+        tb = ''.join(traceback.format_exception(type(original), original, original.__traceback__))
+        print(f"[Duel Error]\n{tb}")
+        msg = f"❌ **Duel error** (copy this and send it):\n```\n{type(original).__name__}: {original}\n```"
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(msg, ephemeral=True)
+            else:
+                await interaction.response.send_message(msg, ephemeral=True)
+        except Exception:
+            pass
 
     @app_commands.command(name="duelrules", description="Show the official 1v1 duel rules")
     async def duelrules(self, interaction: discord.Interaction):
