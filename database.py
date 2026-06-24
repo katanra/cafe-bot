@@ -24,6 +24,11 @@ class Database:
             status        TEXT DEFAULT 'pending',
             created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )''')
+        # Add winner_id to databases created before it was in the schema
+        try:
+            c.execute('ALTER TABLE duels ADD COLUMN winner_id INTEGER')
+        except Exception:
+            pass
         c.execute('''CREATE TABLE IF NOT EXISTS daily_claims (
             user_id    INTEGER PRIMARY KEY,
             last_claim TEXT,
@@ -50,14 +55,12 @@ class Database:
 
     def get_user(self, user_id):
         c = self.conn.cursor()
+        # INSERT OR IGNORE avoids race conditions when multiple async calls
+        # hit this for the same user_id simultaneously
+        c.execute('INSERT OR IGNORE INTO users (user_id) VALUES (?)', (user_id,))
+        self.conn.commit()
         c.execute('SELECT * FROM users WHERE user_id = ?', (user_id,))
-        row = c.fetchone()
-        if not row:
-            c.execute('INSERT INTO users (user_id) VALUES (?)', (user_id,))
-            self.conn.commit()
-            c.execute('SELECT * FROM users WHERE user_id = ?', (user_id,))
-            row = c.fetchone()
-        return dict(row)
+        return dict(c.fetchone())
 
     def add_gold(self, user_id, amount):
         self.get_user(user_id)

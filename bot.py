@@ -36,9 +36,6 @@ async def on_message(message):
     # Award 5 XP per message (not for commands)
     if not message.content.startswith('!') and message.guild:
         bot.db.add_xp(message.author.id, 5)
-        roles_cog = bot.get_cog('Roles')
-        if roles_cog:
-            await roles_cog.update_roles(message.author, message.guild)
     await bot.process_commands(message)
 
 async def load_extensions():
@@ -48,6 +45,11 @@ async def load_extensions():
                 await bot.load_extension(f'cogs.{filename[:-3]}')
             except Exception as e:
                 print(f'⚠️  Failed to load {filename}: {e}')
+
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound):
+        return  # silently ignore stray prefix messages
 
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
@@ -71,8 +73,12 @@ GUILD_ID = discord.Object(id=1392757032939163648)
 @bot.event
 async def setup_hook():
     await load_extensions()
+    # Sync all commands to the guild for instant updates
     bot.tree.copy_global_to(guild=GUILD_ID)
     await bot.tree.sync(guild=GUILD_ID)
+    # Clear global commands so they don't appear twice alongside guild ones
+    bot.tree.clear_commands(guild=None)
+    await bot.tree.sync()
     print('✅ Slash commands synced!')
 
 token = os.getenv('DISCORD_TOKEN')

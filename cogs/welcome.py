@@ -37,11 +37,6 @@ class Welcome(commands.Cog):
         # Initialize user in DB
         self.bot.db.get_user(member.id)
 
-        # Assign Newcomer role
-        roles_cog = self.bot.get_cog('Roles')
-        if roles_cog:
-            await roles_cog.update_roles(member, guild)
-
         member_count = guild.member_count
 
         embed = discord.Embed(
@@ -54,7 +49,7 @@ class Welcome(commands.Cog):
                 f"{SEP}\n"
                 f"→  Use `/daily` to claim XP every day.\n"
                 f"→  Use `/help` to see what the bot can do.\n"
-                f"→  Earn enough XP and your role will level up automatically."
+                f"→  Win duels to climb the leaderboard and earn roles."
             ),
             color=0xB0C0F5
         )

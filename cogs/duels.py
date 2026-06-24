@@ -2,19 +2,16 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import datetime
-import time
 
-DUEL_WIN_GOLD      = 50
-SEP                = ("· " * 14).strip()
-DUEL_MOD_ROLE      = "Duel Mod"
-DUEL_LOG_CHANNEL   = "duel-log"
-DUEL_COOLDOWN_SECS = 30 * 60
-MAX_DAILY_WINS     = 10
+DUEL_WIN_GOLD    = 50
+SEP              = ("· " * 14).strip()
+DUEL_MOD_ROLE    = "Duel Mod"
+DUEL_LOG_CHANNEL = "duel-log"
+MAX_DAILY_WINS   = 10
 
 DUEL_RANK_TITLES = {
     1: "Champion",
     2: "Contender",
-    3: "Challenger",
 }
 
 
@@ -216,8 +213,7 @@ class DuelChallengeView(discord.ui.View):
 class Duels(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self._last_duel:     dict[int, float] = {}
-        self._last_opponent: dict[int, int]   = {}
+        self._last_opponent: dict[int, int] = {}  # back-to-back protection only
 
     @app_commands.command(name="duel", description="Challenge someone to a duel for gold!")
     @app_commands.describe(opponent="The server member you want to challenge")
@@ -235,17 +231,6 @@ class Duels(commands.Cog):
             await interaction.response.send_message("→ You can't duel a bot!", ephemeral=True)
             return
 
-        last = self._last_duel.get(challenger.id, 0)
-        elapsed = time.time() - last
-        if elapsed < DUEL_COOLDOWN_SECS:
-            remaining = int(DUEL_COOLDOWN_SECS - elapsed)
-            m, s = remaining // 60, remaining % 60
-            await interaction.response.send_message(
-                f"→ Wait **{m}m {s}s** before starting another duel.",
-                ephemeral=True
-            )
-            return
-
         if self._last_opponent.get(challenger.id) == opponent.id:
             await interaction.response.send_message(
                 f"→ You can't challenge **{opponent.display_name}** again back-to-back. Challenge someone else first!",
@@ -253,7 +238,6 @@ class Duels(commands.Cog):
             )
             return
 
-        self._last_duel[challenger.id]     = time.time()
         self._last_opponent[challenger.id] = opponent.id
 
         duel_id = self.bot.db.create_duel(challenger.id, opponent.id, interaction.channel_id)
