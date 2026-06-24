@@ -7,7 +7,7 @@ from database import Database
 
 # Fix for voice on Windows — use SelectorEventLoop, compatible through Python 3.15
 import sys
-if sys.platform == "win32" and sys.version_info < (3, 16):
+if sys.platform == "win32" and sys.version_info < (3, 15):
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 load_dotenv()
