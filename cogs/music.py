@@ -144,7 +144,7 @@ class Music(commands.Cog):
                 await state.voice.move_to(vc_channel)
         else:
             try:
-                state.voice = await vc_channel.connect(timeout=10.0, reconnect=False)
+                state.voice = await vc_channel.connect(timeout=10.0, reconnect=False, self_deaf=True)
             except Exception as e:
                 await interaction.followup.send(
                     "❌ Couldn't connect to your voice channel. Try using `/stop` first to reset, then try again.",

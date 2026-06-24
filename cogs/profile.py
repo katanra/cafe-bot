@@ -70,6 +70,7 @@ class Profile(commands.Cog):
         duel_rank  = self.bot.db.get_duel_rank(target.id)
         xp_rank    = self.bot.db.get_xp_rank(target.id)
         gold_rank  = self.bot.db.get_gold_rank(target.id)
+        streak     = self.bot.db.get_streak(target.id)
         vc_block   = self._vc_tier_block(total_vc)
 
         embed = discord.Embed(
@@ -109,6 +110,10 @@ class Profile(commands.Cog):
             duel_value += f"  —  **{rank_label}**"
 
         embed.add_field(name="→  Duel Wins", value=duel_value, inline=True)
+
+        streak_value = f"🔥 **{streak}** days" if streak > 0 else "*No active streak*"
+        embed.add_field(name="→  Daily Streak", value=streak_value, inline=True)
+
         embed.add_field(name="→  VC Time",   value=vc_block,   inline=False)
         embed.set_footer(text="Gold is earned through duels  ·  XP through activity")
         await interaction.response.send_message(embed=embed)

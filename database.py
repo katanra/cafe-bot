@@ -26,8 +26,14 @@ class Database:
         )''')
         c.execute('''CREATE TABLE IF NOT EXISTS daily_claims (
             user_id    INTEGER PRIMARY KEY,
-            last_claim TEXT
+            last_claim TEXT,
+            streak     INTEGER DEFAULT 0
         )''')
+        # Add streak column to existing databases
+        try:
+            c.execute('ALTER TABLE daily_claims ADD COLUMN streak INTEGER DEFAULT 0')
+        except Exception:
+            pass
         c.execute('''CREATE TABLE IF NOT EXISTS vc_milestones (
             user_id   INTEGER,
             milestone INTEGER,
@@ -226,15 +232,54 @@ class Database:
     # ── Daily Claims ──────────────────────────────────────────────────────────
 
     def claim_daily(self, user_id):
+        """Returns ('already_claimed', streak) or ('claimed', new_streak)."""
         c = self.conn.cursor()
-        today = datetime.date.today().isoformat()
-        c.execute('SELECT last_claim FROM daily_claims WHERE user_id = ?', (user_id,))
+        today     = datetime.date.today()
+        today_str = today.isoformat()
+        yesterday = (today - datetime.timedelta(days=1)).isoformat()
+
+        c.execute('SELECT last_claim, streak FROM daily_claims WHERE user_id = ?', (user_id,))
         row = c.fetchone()
-        if row and row['last_claim'] == today:
-            return 'already_claimed'
+
+        if row and row['last_claim'] == today_str:
+            return ('already_claimed', row['streak'])
+
         if row:
-            c.execute('UPDATE daily_claims SET last_claim = ? WHERE user_id = ?', (today, user_id))
+            # Continue streak if claimed yesterday, otherwise reset
+            new_streak = (row['streak'] + 1) if row['last_claim'] == yesterday else 1
+            c.execute(
+                'UPDATE daily_claims SET last_claim = ?, streak = ? WHERE user_id = ?',
+                (today_str, new_streak, user_id)
+            )
         else:
-            c.execute('INSERT INTO daily_claims (user_id, last_claim) VALUES (?, ?)', (user_id, today))
+            new_streak = 1
+            c.execute(
+                'INSERT INTO daily_claims (user_id, last_claim, streak) VALUES (?, ?, ?)',
+                (user_id, today_str, new_streak)
+            )
+
         self.conn.commit()
-        return 'claimed'
+        return ('claimed', new_streak)
+
+    def spend_gold(self, user_id, amount) -> bool:
+        """Deduct gold if user has enough. Returns True on success."""
+        user = self.get_user(user_id)
+        if user['gold'] < amount:
+            return False
+        c = self.conn.cursor()
+        c.execute('UPDATE users SET gold = gold - ? WHERE user_id = ?', (amount, user_id))
+        self.conn.commit()
+        return True
+
+    def get_streak(self, user_id):
+        c = self.conn.cursor()
+        today     = datetime.date.today().isoformat()
+        yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+        c.execute('SELECT last_claim, streak FROM daily_claims WHERE user_id = ?', (user_id,))
+        row = c.fetchone()
+        if not row:
+            return 0
+        # Streak is only alive if claimed today or yesterday
+        if row['last_claim'] in (today, yesterday):
+            return row['streak']
+        return 0
