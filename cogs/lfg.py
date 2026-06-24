@@ -147,7 +147,7 @@ class CustomLobbyModal(discord.ui.Modal, title="Custom Match  —  Apex Legends"
                 f"{SEP}\n"
                 f"→  Hosted by {interaction.user.mention}"
             ),
-            color=0xF1C40F
+            color=0xCDB4DB   # pastel purple
         )
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         embed.set_footer(text="Copy the code above  ·  React to join the host's VC")
@@ -263,9 +263,6 @@ class ApexModeView(discord.ui.View):
     @discord.ui.button(label="BR Duos",    style=discord.ButtonStyle.primary,   row=0)
     async def br_duos(self, i, b):   await self._post(i, "BR Duos")
 
-    @discord.ui.button(label="BR Solos",   style=discord.ButtonStyle.primary,   row=0)
-    async def br_solos(self, i, b):  await self._post(i, "BR Solos")
-
     @discord.ui.button(label="Ranked BR",  style=discord.ButtonStyle.danger,    row=0)
     async def ranked_br(self, i, b):
         await i.response.edit_message(
@@ -371,7 +368,7 @@ def _build_embed(
             f"\n{SEP}\n"
             f"→  {user.mention}"
         ),
-        color=0xB0C0F5
+        color=0xBDD5EA   # pastel sky blue
     )
     embed.set_thumbnail(url=user.display_avatar.url)
     embed.set_footer(text="React [+] to join  ·  Un-react to leave")
@@ -413,7 +410,7 @@ class LFG(commands.Cog):
                 f"{SEP}\n"
                 f"→  Create a custom voice channel for your group?"
             ),
-            color=0xB0C0F5
+            color=0xD5C8F0   # pastel lavender
         )
         await interaction.response.send_message(
             embed=embed,
