@@ -40,7 +40,7 @@ DUEL_RULES = [
 
 
 class ActiveDuelView(discord.ui.View):
-    """Only Duel Mods can click the winner buttons."""
+    """Duel Mods (or server admins if no Duel Mod role exists) confirm the winner."""
 
     def __init__(self, challenger: discord.Member, opponent: discord.Member, db, duel_id: int):
         super().__init__(timeout=None)
@@ -54,7 +54,12 @@ class ActiveDuelView(discord.ui.View):
 
     def _is_duel_mod(self, interaction: discord.Interaction) -> bool:
         role = discord.utils.get(interaction.guild.roles, name=DUEL_MOD_ROLE)
-        return role in interaction.user.roles if role else False
+        if role:
+            return role in interaction.user.roles
+        # No Duel Mod role set up — fall back to Manage Server permission
+        if isinstance(interaction.user, discord.Member):
+            return interaction.user.guild_permissions.manage_guild
+        return False
 
     async def _resolve(self, interaction: discord.Interaction, winner: discord.Member, loser: discord.Member):
         today_wins = interaction.client.db.get_daily_wins(winner.id)
@@ -110,7 +115,7 @@ class ActiveDuelView(discord.ui.View):
     async def challenger_wins(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not self._is_duel_mod(interaction):
             await interaction.response.send_message(
-                f"→ Only **{DUEL_MOD_ROLE}**s can confirm the winner!", ephemeral=True
+                f"→ Only **{DUEL_MOD_ROLE}**s (or server admins) can confirm the winner!", ephemeral=True
             )
             return
         await self._resolve(interaction, self.challenger, self.opponent)
@@ -119,7 +124,7 @@ class ActiveDuelView(discord.ui.View):
     async def opponent_wins(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not self._is_duel_mod(interaction):
             await interaction.response.send_message(
-                f"→ Only **{DUEL_MOD_ROLE}**s can confirm the winner!", ephemeral=True
+                f"→ Only **{DUEL_MOD_ROLE}**s (or server admins) can confirm the winner!", ephemeral=True
             )
             return
         await self._resolve(interaction, self.opponent, self.challenger)
@@ -128,7 +133,7 @@ class ActiveDuelView(discord.ui.View):
     async def no_contest(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not self._is_duel_mod(interaction):
             await interaction.response.send_message(
-                f"→ Only **{DUEL_MOD_ROLE}**s can cancel a duel!", ephemeral=True
+                f"→ Only **{DUEL_MOD_ROLE}**s (or server admins) can cancel a duel!", ephemeral=True
             )
             return
         self.db.cancel_duel_by_id(self.duel_id)
@@ -147,6 +152,7 @@ class DuelChallengeView(discord.ui.View):
         self.opponent   = opponent
         self.db         = db
         self.duel_id    = duel_id
+        self.message: discord.Message | None = None  # set after send
 
     @discord.ui.button(label="Accept", style=discord.ButtonStyle.primary)
     async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -154,6 +160,7 @@ class DuelChallengeView(discord.ui.View):
             await interaction.response.send_message("→ This challenge isn't for you!", ephemeral=True)
             return
         self.db.accept_duel(self.duel_id)
+        self.stop()
         for item in self.children:
             item.disabled = True
 
@@ -172,7 +179,7 @@ class DuelChallengeView(discord.ui.View):
                 f"→  First to 9 kills in The PIT\n"
                 f"→  One player must share screen in VC\n"
                 f"{SEP}\n"
-                f"*A* ***{DUEL_MOD_ROLE}*** *must confirm the winner below.*"
+                f"*A* ***{DUEL_MOD_ROLE}*** *(or admin) must confirm the winner below.*"
             ),
             color=0xB0C0F5
         )
@@ -185,6 +192,7 @@ class DuelChallengeView(discord.ui.View):
             await interaction.response.send_message("→ This challenge isn't for you!", ephemeral=True)
             return
         self.db.cancel_duel_by_id(self.duel_id)
+        self.stop()
         for item in self.children:
             item.disabled = True
         await interaction.response.edit_message(
@@ -195,6 +203,14 @@ class DuelChallengeView(discord.ui.View):
         self.db.cancel_duel_by_id(self.duel_id)
         for item in self.children:
             item.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(
+                    content=f"→ Duel challenge expired — {self.opponent.mention} didn't respond in time.",
+                    embed=None, view=self
+                )
+            except Exception:
+                pass
 
 
 class Duels(commands.Cog):
@@ -204,6 +220,7 @@ class Duels(commands.Cog):
         self._last_opponent: dict[int, int]   = {}
 
     @app_commands.command(name="duel", description="Challenge someone to a duel for gold!")
+    @app_commands.describe(opponent="The server member you want to challenge")
     async def duel(self, interaction: discord.Interaction, opponent: discord.Member):
         challenger = interaction.user
 
@@ -240,8 +257,8 @@ class Duels(commands.Cog):
         mod_role = discord.utils.get(interaction.guild.roles, name=DUEL_MOD_ROLE)
         mod_ping = mod_role.mention if mod_role else ""
 
-        c_rank = self.bot.db.get_duel_rank(challenger.id)
-        o_rank = self.bot.db.get_duel_rank(opponent.id)
+        c_rank  = self.bot.db.get_duel_rank(challenger.id)
+        o_rank  = self.bot.db.get_duel_rank(opponent.id)
         c_label = f"  `{duel_rank_label(c_rank)}`" if c_rank > 0 else ""
         o_label = f"  `{duel_rank_label(o_rank)}`" if o_rank > 0 else ""
 
@@ -252,15 +269,17 @@ class Duels(commands.Cog):
                 f"{SEP}\n"
                 f"→  {challenger.mention}{c_label} has challenged {opponent.mention}{o_label}\n"
                 f"→  Winner earns **{DUEL_WIN_GOLD} gold**\n"
-                f"→  A **{DUEL_MOD_ROLE}** will confirm the winner\n"
+                f"→  A **{DUEL_MOD_ROLE}** (or admin) will confirm the winner\n"
                 f"{SEP}\n"
                 f"*{opponent.mention}, do you accept?*"
             ),
             color=0xB0C0F5
         )
-        view = DuelChallengeView(challenger, opponent, self.bot.db, duel_id)
+        view    = DuelChallengeView(challenger, opponent, self.bot.db, duel_id)
         content = f"{mod_ping} Duel requested — please be ready to spectate!" if mod_ping else None
         await interaction.response.send_message(content=content, embed=embed, view=view)
+        # Store message ref so on_timeout can edit it
+        view.message = await interaction.original_response()
 
     @app_commands.command(name="duelrules", description="Show the official 1v1 duel rules")
     async def duelrules(self, interaction: discord.Interaction):
@@ -304,9 +323,12 @@ class Duels(commands.Cog):
     @app_commands.describe(duel_id="The duel ID to void")
     async def duelvoid(self, interaction: discord.Interaction, duel_id: int):
         mod_role = discord.utils.get(interaction.guild.roles, name=DUEL_MOD_ROLE)
-        if not mod_role or mod_role not in interaction.user.roles:
+        # Allow Duel Mod role OR Manage Server permission
+        has_access = (mod_role and mod_role in interaction.user.roles) or \
+                     interaction.user.guild_permissions.manage_guild
+        if not has_access:
             await interaction.response.send_message(
-                f"→ Only **{DUEL_MOD_ROLE}**s can void duels.", ephemeral=True
+                f"→ Only **{DUEL_MOD_ROLE}**s or server admins can void duels.", ephemeral=True
             )
             return
         self.bot.db.cancel_duel_by_id(duel_id)
