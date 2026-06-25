@@ -1,10 +1,26 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
+import os
 
 SEP = ("· " * 14).strip()
 
 LFG_VC_CATEGORY_ID = 1515950863422586950
+
+# ── Rank image map ─────────────────────────────────────────────────────────────
+# Images live in the root Cafe Bot folder, one level above cogs/
+_IMG_DIR = os.path.join(os.path.dirname(__file__), "..")
+
+RANK_IMAGES: dict[str, str] = {
+    "Predator": os.path.join(_IMG_DIR, "Pred.png"),
+    "Master":   os.path.join(_IMG_DIR, "Master.png"),
+    "Diamond":  os.path.join(_IMG_DIR, "diamond.png"),
+    "Platinum": os.path.join(_IMG_DIR, "Plat.png"),
+    "Gold":     os.path.join(_IMG_DIR, "Gold.png"),
+    "Silver":   os.path.join(_IMG_DIR, "Silver.png"),
+    "Bronze":   os.path.join(_IMG_DIR, "Bronze.png"),
+    # Rookie has no badge image
+}
 
 APEX_RANK_OPTIONS = [
     discord.SelectOption(label="Predator",  value="Predator",  description="Top 750 per platform"),
@@ -83,7 +99,7 @@ class VCNameModal(discord.ui.Modal, title="Name Your Voice Channel"):
         name  = self.vc_name.value.strip()
         vc    = await _create_and_move(interaction.guild, name, interaction.user)
         embed = _build_embed(interaction.user, self.game, self.mode, self.rank, 0, vc)
-        msg   = await _send_lfg(interaction, embed)
+        msg   = await _send_lfg(interaction, embed, rank=self.rank)
         self.cog._track(msg, interaction.user.id, vc)
         await interaction.response.send_message("→  LFG posted!", ephemeral=True)
 
@@ -102,7 +118,7 @@ class CustomLobbyModal(discord.ui.Modal, title="Custom Match  —  Apex Legends"
         placeholder="e.g. Apex customs, Friday customs...",
         min_length=1,
         max_length=40,
-        required=False   # only used when create_vc=True; hidden otherwise
+        required=False
     )
     notes = discord.ui.TextInput(
         label="Notes  (optional)",
@@ -116,7 +132,6 @@ class CustomLobbyModal(discord.ui.Modal, title="Custom Match  —  Apex Legends"
         super().__init__()
         self.cog       = cog
         self.create_vc = create_vc
-        # Adjust label so it's clear the VC name field only matters when relevant
         if not create_vc:
             self.vc_name.label       = "Voice Channel Name  (skipped — no VC)"
             self.vc_name.placeholder = "Not used since you chose no VC"
@@ -132,25 +147,20 @@ class CustomLobbyModal(discord.ui.Modal, title="Custom Match  —  Apex Legends"
         else:
             vc = None
 
-        vc_line    = f"\n→  Voice channel: {vc.mention}" if vc else ""
-        notes_line = f"\n{SEP}\n→  {notes}" if notes else ""
-
         embed = discord.Embed(
             title="Custom Match  —  Apex Legends",
-            description=(
-                f"*Custom lobby  ·  open to join*\n"
-                f"{SEP}\n"
-                f"**Lobby Code**\n"
-                f"```\n{code}\n```"
-                f"{notes_line}"
-                f"{vc_line}\n"
-                f"{SEP}\n"
-                f"→  Hosted by {interaction.user.mention}"
-            ),
             color=0xCDB4DB   # pastel purple
         )
-        embed.set_thumbnail(url=interaction.user.display_avatar.url)
-        embed.set_footer(text="Copy the code above  ·  React to join the host's VC")
+        embed.set_author(
+            name=interaction.user.display_name,
+            icon_url=interaction.user.display_avatar.url
+        )
+        embed.add_field(name="Lobby Code", value=f"```\n{code}\n```", inline=False)
+        if notes:
+            embed.add_field(name="Notes", value=notes, inline=False)
+        if vc:
+            embed.add_field(name="Voice Channel", value=vc.mention, inline=False)
+        embed.set_footer(text="Copy the code above  ·  React ✅ to join the host's VC")
 
         msg = await _send_lfg(interaction, embed)
         self.cog._track(msg, interaction.user.id, vc)
@@ -232,7 +242,7 @@ class ApexRankView(discord.ui.View):
         else:
             await interaction.response.edit_message(content="→  LFG posted!", view=None, embeds=[])
             embed = _build_embed(interaction.user, "Apex Legends", "Ranked BR", rank, 0, None)
-            msg   = await _send_lfg(interaction, embed)
+            msg   = await _send_lfg(interaction, embed, rank=rank)
             self.cog._track(msg, interaction.user.id, None)
 
 
@@ -246,7 +256,6 @@ class ApexModeView(discord.ui.View):
 
     async def _post(self, interaction: discord.Interaction, mode: str):
         if self.create_vc:
-            # Ask for VC name before posting
             await interaction.response.send_modal(
                 VCNameModal(self.cog, "Apex Legends", mode, None)
             )
@@ -348,42 +357,58 @@ def _build_embed(
     vc: discord.VoiceChannel | None,
     description: str | None = None,
 ) -> discord.Embed:
-    lines = []
-    if mode:
-        lines.append(f"→  **Mode** · {mode}")
-    if rank:
-        lines.append(f"→  **Rank** · {rank}")
-    if slots > 0:
-        lines.append(f"→  **Slots** · {slots} needed")
-    if description:
-        lines.append(f"→  {description}")
-    if vc:
-        lines.append(f"→  **Voice** · {vc.mention}")
-
     embed = discord.Embed(
         title=f"Looking For Group  ·  {game}",
-        description=(
-            f"{SEP}\n"
-            + ("\n".join(lines) or "→  Looking for players") +
-            f"\n{SEP}\n"
-            f"→  {user.mention}"
-        ),
         color=0xBDD5EA   # pastel sky blue
     )
-    embed.set_thumbnail(url=user.display_avatar.url)
-    embed.set_footer(text="React [+] to join  ·  Un-react to leave")
+
+    # Author line shows who posted
+    embed.set_author(
+        name=user.display_name,
+        icon_url=user.display_avatar.url
+    )
+
+    # Core info as fields — renders larger and easier to scan
+    if mode:
+        embed.add_field(name="Mode", value=f"## {mode}", inline=True)
+    if rank:
+        embed.add_field(name="Rank", value=f"## {rank}", inline=True)
+    if slots > 0:
+        embed.add_field(name="Slots Needed", value=f"## {slots}", inline=True)
+    if vc:
+        embed.add_field(name="Voice Channel", value=vc.mention, inline=False)
+    if description:
+        embed.add_field(name="Notes", value=f"> {description}", inline=False)
+
+    embed.set_footer(text=f"Posted by {user.display_name}  ·  React ✅ to join  ·  Un-react to leave")
     return embed
 
 
 async def _send_lfg(
     interaction: discord.Interaction,
     embed: discord.Embed,
+    rank: str | None = None,
 ) -> discord.Message:
     lfg_ping = discord.utils.get(interaction.guild.roles, name="LFG Ping")
-    msg = await interaction.channel.send(
-        content=lfg_ping.mention if lfg_ping else None,
-        embed=embed
-    )
+
+    # Attach rank badge image if one exists for this rank
+    files: list[discord.File] = []
+    if rank and rank in RANK_IMAGES:
+        img_path = RANK_IMAGES[rank]
+        if os.path.isfile(img_path):
+            img_filename = os.path.basename(img_path)
+            files.append(discord.File(img_path, filename=img_filename))
+            # set_image makes it display large at the bottom of the embed
+            embed.set_image(url=f"attachment://{img_filename}")
+
+    kwargs: dict = {
+        "content": lfg_ping.mention if lfg_ping else None,
+        "embed":   embed,
+    }
+    if files:
+        kwargs["files"] = files
+
+    msg = await interaction.channel.send(**kwargs)
     await msg.add_reaction("✅")
     return msg
 
