@@ -8,7 +8,6 @@ SEP = ("· " * 14).strip()
 LFG_VC_CATEGORY_ID = 1515950863422586950
 
 # ── Rank image map ─────────────────────────────────────────────────────────────
-# Images live in the root Cafe Bot folder, one level above cogs/
 _IMG_DIR = os.path.join(os.path.dirname(__file__), "..")
 
 RANK_IMAGES: dict[str, str] = {
@@ -19,7 +18,6 @@ RANK_IMAGES: dict[str, str] = {
     "Gold":     os.path.join(_IMG_DIR, "Gold.png"),
     "Silver":   os.path.join(_IMG_DIR, "Silver.png"),
     "Bronze":   os.path.join(_IMG_DIR, "Bronze.png"),
-    # Rookie has no badge image
 }
 
 APEX_RANK_OPTIONS = [
@@ -68,7 +66,6 @@ async def _create_and_move(
         print(f"[LFG] VC creation error: {e}")
         return None
 
-    # Move poster if they're already in a voice channel
     if isinstance(user, discord.Member) and user.voice and user.voice.channel:
         try:
             await user.move_to(vc)
@@ -78,7 +75,50 @@ async def _create_and_move(
     return vc
 
 
-# ── VC Name Modal (used by standard Apex modes + Ranked BR when creating a VC) ─
+# ── Ranked Modal ───────────────────────────────────────────────────────────────
+# Shown after rank is selected — always has a notes field, VC name only if create_vc=True
+
+class RankedModal(discord.ui.Modal, title="Ranked BR  —  Apex Legends"):
+    def __init__(self, cog, rank: str, create_vc: bool):
+        super().__init__()
+        self.cog       = cog
+        self.rank      = rank
+        self.create_vc = create_vc
+
+        # VC name only needed when creating a voice channel
+        if create_vc:
+            self.vc_field = discord.ui.TextInput(
+                label="Voice Channel Name",
+                placeholder="e.g. Ranked grind, Diamond push...",
+                min_length=1,
+                max_length=40
+            )
+            self.add_item(self.vc_field)
+
+        self.notes_field = discord.ui.TextInput(
+            label="Notes",
+            style=discord.TextStyle.paragraph,
+            placeholder="e.g. Diamond+ only, mic preferred, chill grind welcome...",
+            required=False,
+            max_length=300
+        )
+        self.add_item(self.notes_field)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        notes = self.notes_field.value.strip()
+        vc    = None
+
+        if self.create_vc:
+            name = self.vc_field.value.strip()
+            vc   = await _create_and_move(interaction.guild, name, interaction.user)
+
+        embed = _build_ranked_embed(interaction.user, self.rank, vc, notes)
+        msg   = await _send_lfg(interaction, embed, rank=self.rank)
+        self.cog._track(msg, interaction.user.id, vc)
+        await interaction.response.send_message("LFG posted!", ephemeral=True)
+
+
+# ── VC Name Modal (standard modes — BR Trios, Duos, etc.) ─────────────────────
 
 class VCNameModal(discord.ui.Modal, title="Name Your Voice Channel"):
     vc_name = discord.ui.TextInput(
@@ -101,7 +141,7 @@ class VCNameModal(discord.ui.Modal, title="Name Your Voice Channel"):
         embed = _build_embed(interaction.user, self.game, self.mode, self.rank, 0, vc)
         msg   = await _send_lfg(interaction, embed, rank=self.rank)
         self.cog._track(msg, interaction.user.id, vc)
-        await interaction.response.send_message("→  LFG posted!", ephemeral=True)
+        await interaction.response.send_message("LFG posted!", ephemeral=True)
 
 
 # ── Modals ─────────────────────────────────────────────────────────────────────
@@ -121,7 +161,7 @@ class CustomLobbyModal(discord.ui.Modal, title="Custom Match  —  Apex Legends"
         required=False
     )
     notes = discord.ui.TextInput(
-        label="Notes  (optional)",
+        label="Notes",
         style=discord.TextStyle.paragraph,
         placeholder="Rules, settings, what you need...",
         required=False,
@@ -133,7 +173,7 @@ class CustomLobbyModal(discord.ui.Modal, title="Custom Match  —  Apex Legends"
         self.cog       = cog
         self.create_vc = create_vc
         if not create_vc:
-            self.vc_name.label       = "Voice Channel Name  (skipped — no VC)"
+            self.vc_name.label       = "Voice Channel Name  (skipped)"
             self.vc_name.placeholder = "Not used since you chose no VC"
 
     async def on_submit(self, interaction: discord.Interaction):
@@ -149,7 +189,7 @@ class CustomLobbyModal(discord.ui.Modal, title="Custom Match  —  Apex Legends"
 
         embed = discord.Embed(
             title="Custom Match  —  Apex Legends",
-            color=0xCDB4DB   # pastel purple
+            color=0xCDB4DB
         )
         embed.set_author(
             name=interaction.user.display_name,
@@ -164,7 +204,7 @@ class CustomLobbyModal(discord.ui.Modal, title="Custom Match  —  Apex Legends"
 
         msg = await _send_lfg(interaction, embed)
         self.cog._track(msg, interaction.user.id, vc)
-        await interaction.response.send_message("→  Custom lobby posted!", ephemeral=True)
+        await interaction.response.send_message("Custom lobby posted!", ephemeral=True)
 
 
 class OtherGameModal(discord.ui.Modal, title="Post LFG"):
@@ -215,7 +255,7 @@ class OtherGameModal(discord.ui.Modal, title="Post LFG"):
         embed = _build_embed(interaction.user, game, None, None, slots, vc, desc)
         msg   = await _send_lfg(interaction, embed)
         self.cog._track(msg, interaction.user.id, vc)
-        await interaction.response.send_message("→  LFG posted!", ephemeral=True)
+        await interaction.response.send_message("LFG posted!", ephemeral=True)
 
 
 # ── Rank select ────────────────────────────────────────────────────────────────
@@ -234,16 +274,10 @@ class ApexRankView(discord.ui.View):
 
     async def _on_rank(self, interaction: discord.Interaction):
         rank = interaction.data["values"][0]
-        if self.create_vc:
-            # Send the VC name modal — it will post the LFG on submit
-            await interaction.response.send_modal(
-                VCNameModal(self.cog, "Apex Legends", "Ranked BR", rank)
-            )
-        else:
-            await interaction.response.edit_message(content="→  LFG posted!", view=None, embeds=[])
-            embed = _build_embed(interaction.user, "Apex Legends", "Ranked BR", rank, 0, None)
-            msg   = await _send_lfg(interaction, embed, rank=rank)
-            self.cog._track(msg, interaction.user.id, None)
+        # RankedModal handles both VC name (if needed) and notes
+        await interaction.response.send_modal(
+            RankedModal(self.cog, rank=rank, create_vc=self.create_vc)
+        )
 
 
 # ── Apex mode buttons ──────────────────────────────────────────────────────────
@@ -260,7 +294,7 @@ class ApexModeView(discord.ui.View):
                 VCNameModal(self.cog, "Apex Legends", mode, None)
             )
         else:
-            await interaction.response.edit_message(content="→  LFG posted!", view=None, embeds=[])
+            await interaction.response.edit_message(content="LFG posted!", view=None, embeds=[])
             embed = _build_embed(interaction.user, "Apex Legends", mode, None, 0, None)
             msg   = await _send_lfg(interaction, embed)
             self.cog._track(msg, interaction.user.id, None)
@@ -275,7 +309,7 @@ class ApexModeView(discord.ui.View):
     @discord.ui.button(label="Ranked BR",  style=discord.ButtonStyle.danger,    row=0)
     async def ranked_br(self, i, b):
         await i.response.edit_message(
-            content="→  Select your rank:",
+            content="Select your rank:",
             view=ApexRankView(self.cog, self.create_vc),
             embeds=[]
         )
@@ -312,7 +346,7 @@ class GameSelectView(discord.ui.View):
     @discord.ui.button(label="Apex Legends",   style=discord.ButtonStyle.primary,   row=0)
     async def apex(self, interaction: discord.Interaction, button):
         await interaction.response.edit_message(
-            content="→  Select a game mode:",
+            content="Select a game mode:",
             view=ApexModeView(self.cog, self.create_vc),
             embeds=[]
         )
@@ -332,7 +366,7 @@ class VCChoiceView(discord.ui.View):
     @discord.ui.button(label="Yes, create one",   style=discord.ButtonStyle.success,   row=0)
     async def yes_vc(self, interaction: discord.Interaction, button):
         await interaction.response.edit_message(
-            content="→  Select a game:",
+            content="Select a game:",
             view=GameSelectView(self.cog, create_vc=True),
             embeds=[]
         )
@@ -340,13 +374,46 @@ class VCChoiceView(discord.ui.View):
     @discord.ui.button(label="No, just post it",  style=discord.ButtonStyle.secondary, row=0)
     async def no_vc(self, interaction: discord.Interaction, button):
         await interaction.response.edit_message(
-            content="→  Select a game:",
+            content="Select a game:",
             view=GameSelectView(self.cog, create_vc=False),
             embeds=[]
         )
 
 
-# ── Embed builder ──────────────────────────────────────────────────────────────
+# ── Embed builders ─────────────────────────────────────────────────────────────
+
+def _build_ranked_embed(
+    user: discord.Member,
+    rank: str,
+    vc: discord.VoiceChannel | None,
+    notes: str | None,
+) -> discord.Embed:
+    """Minimal, clean embed specifically for Ranked BR posts."""
+    embed = discord.Embed(
+        title="Looking for Group  ·  Ranked BR",
+        color=0xBDD5EA
+    )
+
+    # User shown as author at the top
+    embed.set_author(
+        name=user.display_name,
+        icon_url=user.display_avatar.url
+    )
+
+    # Rank field — clean, no extra symbols
+    embed.add_field(name="Rank", value=rank, inline=True)
+
+    # Voice channel if one was created
+    if vc:
+        embed.add_field(name="Voice Channel", value=vc.mention, inline=True)
+
+    # Notes on its own row so it has breathing room
+    if notes:
+        embed.add_field(name="Notes", value=notes, inline=False)
+
+    embed.set_footer(text=f"Posted by {user.display_name}  ·  React ✅ to join")
+    return embed
+
 
 def _build_embed(
     user: discord.Member,
@@ -358,29 +425,27 @@ def _build_embed(
     description: str | None = None,
 ) -> discord.Embed:
     embed = discord.Embed(
-        title=f"Looking For Group  ·  {game}",
-        color=0xBDD5EA   # pastel sky blue
+        title=f"Looking for Group  ·  {game}",
+        color=0xBDD5EA
     )
 
-    # Author line shows who posted
     embed.set_author(
         name=user.display_name,
         icon_url=user.display_avatar.url
     )
 
-    # Core info as fields — renders larger and easier to scan
     if mode:
-        embed.add_field(name="Mode", value=f"## {mode}", inline=True)
+        embed.add_field(name="Mode", value=mode, inline=True)
     if rank:
-        embed.add_field(name="Rank", value=f"## {rank}", inline=True)
+        embed.add_field(name="Rank", value=rank, inline=True)
     if slots > 0:
-        embed.add_field(name="Slots Needed", value=f"## {slots}", inline=True)
+        embed.add_field(name="Slots Needed", value=str(slots), inline=True)
     if vc:
         embed.add_field(name="Voice Channel", value=vc.mention, inline=False)
     if description:
-        embed.add_field(name="Notes", value=f"> {description}", inline=False)
+        embed.add_field(name="Notes", value=description, inline=False)
 
-    embed.set_footer(text=f"Posted by {user.display_name}  ·  React ✅ to join  ·  Un-react to leave")
+    embed.set_footer(text=f"Posted by {user.display_name}  ·  React ✅ to join")
     return embed
 
 
@@ -391,15 +456,14 @@ async def _send_lfg(
 ) -> discord.Message:
     lfg_ping = discord.utils.get(interaction.guild.roles, name="LFG Ping")
 
-    # Attach rank badge image if one exists for this rank
+    # Attach rank badge as thumbnail (top-right corner of the embed)
     files: list[discord.File] = []
     if rank and rank in RANK_IMAGES:
         img_path = RANK_IMAGES[rank]
         if os.path.isfile(img_path):
             img_filename = os.path.basename(img_path)
             files.append(discord.File(img_path, filename=img_filename))
-            # set_image makes it display large at the bottom of the embed
-            embed.set_image(url=f"attachment://{img_filename}")
+            embed.set_thumbnail(url=f"attachment://{img_filename}")
 
     kwargs: dict = {
         "content": lfg_ping.mention if lfg_ping else None,
@@ -431,11 +495,11 @@ class LFG(commands.Cog):
     async def start_lfg_flow(self, interaction: discord.Interaction):
         embed = discord.Embed(
             description=(
-                f"*Setting up your LFG post*\n"
+                f"Setting up your LFG post\n"
                 f"{SEP}\n"
-                f"→  Create a custom voice channel for your group?"
+                f"Create a custom voice channel for your group?"
             ),
-            color=0xD5C8F0   # pastel lavender
+            color=0xD5C8F0
         )
         await interaction.response.send_message(
             embed=embed,
@@ -488,7 +552,7 @@ class LFG(commands.Cog):
         if not poster or not poster.voice or not poster.voice.channel:
             if text_channel:
                 await text_channel.send(
-                    f"→  {reactor.mention} The host isn't in a voice channel right now.",
+                    f"{reactor.mention} The host isn't in a voice channel right now.",
                     delete_after=8
                 )
             return
@@ -498,12 +562,12 @@ class LFG(commands.Cog):
         if not reactor.voice or not reactor.voice.channel:
             try:
                 await reactor.send(
-                    f"→  Join any voice channel first, then react to be moved to **{target_vc.name}**!"
+                    f"Join any voice channel first, then react to be moved to **{target_vc.name}**!"
                 )
             except discord.Forbidden:
                 if text_channel:
                     await text_channel.send(
-                        f"→  {reactor.mention} Join a VC first, then react to be moved to {target_vc.mention}!",
+                        f"{reactor.mention} Join a VC first, then react to be moved to {target_vc.mention}!",
                         delete_after=10
                     )
             return
