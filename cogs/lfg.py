@@ -20,6 +20,18 @@ RANK_IMAGES: dict[str, str] = {
     "Bronze":   os.path.join(_IMG_DIR, "Bronze.png"),
 }
 
+# ── Rank colors ───────────────────────────────────────────────────────────────
+RANK_COLORS: dict[str, int] = {
+    "Predator": 0xFFB3B3,   # pastel red
+    "Master":   0xD4AAEE,   # pastel purple
+    "Diamond":  0xADD8F7,   # pastel blue
+    "Platinum": 0xAFEEEE,   # pastel teal
+    "Gold":     0xFFE599,   # pastel gold
+    "Silver":   0xDDDDDD,   # pastel silver
+    "Bronze":   0xE8C49A,   # pastel bronze
+    "Rookie":   0xD0D0D0,   # pastel grey
+}
+
 APEX_RANK_OPTIONS = [
     discord.SelectOption(label="Predator",  value="Predator",  description="Top 750 per platform"),
     discord.SelectOption(label="Master",    value="Master",    description="Masters tier"),
@@ -57,7 +69,11 @@ async def _create_and_move(
             category=category,
             overwrites={
                 guild.default_role: discord.PermissionOverwrite(
-                    view_channel=True, connect=True, speak=True
+                    view_channel=True,
+                    connect=True,
+                    speak=True,
+                    send_messages=True,
+                    read_message_history=True,
                 )
             },
             reason=f"LFG by {user}"
@@ -391,7 +407,7 @@ def _build_ranked_embed(
     """Minimal, clean embed specifically for Ranked BR posts."""
     embed = discord.Embed(
         title="Looking for Group  ·  Ranked BR",
-        color=0xBDD5EA
+        color=RANK_COLORS.get(rank, 0xBDD5EA)
     )
 
     # User shown as author at the top

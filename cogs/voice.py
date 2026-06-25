@@ -303,6 +303,15 @@ class Voice(commands.Cog):
                 name=f"[ {name} ]",
                 category=category,
                 user_limit=limit if limit > 0 else None,
+                overwrites={
+                    guild.default_role: discord.PermissionOverwrite(
+                        view_channel=True,
+                        connect=True,
+                        speak=True,
+                        send_messages=True,
+                        read_message_history=True,
+                    )
+                },
                 reason=f"Temp VC by {interaction.user}"
             )
             self.temp_vcs[channel.id] = interaction.user.id
