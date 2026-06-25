@@ -498,15 +498,17 @@ async def _send_lfg(
 class LFG(commands.Cog):
     def __init__(self, bot):
         self.bot        = bot
-        self.lfg_posts: dict[int, int]            = {}
-        self.origins:   dict[int, dict[int, int]] = {}
-        self.lfg_vcs:   dict[int, int]            = {}
+        self.lfg_posts:    dict[int, int]            = {}   # msg_id → poster_id
+        self.origins:      dict[int, dict[int, int]] = {}   # msg_id → {user_id: origin_vc_id}
+        self.lfg_vcs:      dict[int, int]            = {}   # vc_id  → msg_id  (for auto-delete)
+        self.lfg_msg_to_vc: dict[int, int]           = {}   # msg_id → vc_id   (for react lookup)
 
     def _track(self, msg: discord.Message, poster_id: int, vc: discord.VoiceChannel | None):
         self.lfg_posts[msg.id] = poster_id
         self.origins[msg.id]   = {}
         if vc:
-            self.lfg_vcs[vc.id] = msg.id
+            self.lfg_vcs[vc.id]       = msg.id
+            self.lfg_msg_to_vc[msg.id] = vc.id
 
     async def start_lfg_flow(self, interaction: discord.Interaction):
         embed = discord.Embed(
@@ -533,12 +535,14 @@ class LFG(commands.Cog):
     async def on_voice_state_update(self, member, before, after):
         if before.channel and before.channel.id in self.lfg_vcs:
             if len(before.channel.members) == 0:
-                vc_id = before.channel.id
+                vc_id  = before.channel.id
+                msg_id = self.lfg_vcs.pop(vc_id, None)
+                if msg_id:
+                    self.lfg_msg_to_vc.pop(msg_id, None)
                 try:
                     await before.channel.delete(reason="LFG VC empty — auto-removed")
                 except Exception:
                     pass
-                self.lfg_vcs.pop(vc_id, None)
 
     # ── React to join host VC ─────────────────────────────────────────────────
 
@@ -565,15 +569,23 @@ class LFG(commands.Cog):
         poster       = guild.get_member(poster_id)
         text_channel = guild.get_channel(payload.channel_id)
 
-        if not poster or not poster.voice or not poster.voice.channel:
+        # Prefer the dedicated LFG VC if one was created for this post,
+        # otherwise fall back to wherever the poster currently is.
+        target_vc: discord.VoiceChannel | None = None
+        lfg_vc_id = self.lfg_msg_to_vc.get(payload.message_id)
+        if lfg_vc_id:
+            target_vc = guild.get_channel(lfg_vc_id)   # type: ignore[assignment]
+
+        if target_vc is None and poster and poster.voice and poster.voice.channel:
+            target_vc = poster.voice.channel
+
+        if target_vc is None:
             if text_channel:
                 await text_channel.send(
                     f"{reactor.mention} The host isn't in a voice channel right now.",
                     delete_after=8
                 )
             return
-
-        target_vc = poster.voice.channel
 
         if not reactor.voice or not reactor.voice.channel:
             try:
